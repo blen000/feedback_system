@@ -50,6 +50,7 @@
 
 :root {
   /* Brand: brown #823e16 (primary) and gold #e99d02 (accent) on a warm cream ground */
+  color-scheme: light;
   --brand-brown: #823e16;
   --brand-gold: #e99d02;
   --brand-cream: #f5f2ed;
@@ -100,6 +101,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --viz-1: #e99d02;
   --viz-2: #d98b5f;
   --viz-grid: #2f2923;

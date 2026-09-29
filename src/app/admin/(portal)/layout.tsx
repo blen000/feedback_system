@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { AdminBreadcrumbs } from "@/components/admin/admin-breadcrumbs";
 import { AdminSidebar, type NavGroup } from "@/components/admin/admin-sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -84,13 +85,14 @@ export default async function PortalLayout({ children }: LayoutProps<"/admin">) 
   return (
     <SidebarProvider>
       <AdminSidebar groups={groups} user={{ name: ctx.name, email: ctx.email }} />
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="flex h-14 items-center gap-2 border-b px-4">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-5" />
           <AdminBreadcrumbs />
+          <ThemeToggle className="ml-auto" />
         </header>
-        <div className="flex-1 space-y-6 p-4 md:p-6">{children}</div>
+        <div className="min-w-0 flex-1 space-y-6 p-4 md:p-6">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );

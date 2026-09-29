@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { BANK_NAME, BrandMark } from "@/components/brand/brand";
 import { PublicFeedback } from "@/components/feedback/public-feedback";
 import { requestMeta } from "@/lib/auth/session";
@@ -14,6 +15,7 @@ function Shell({ children, location }: { children: React.ReactNode; location?: s
           <p className="font-semibold">{BANK_NAME}</p>
           {location ? <p className="text-sm text-muted-foreground">{location}</p> : null}
         </div>
+        <ThemeToggle className="ml-auto" />
       </header>
       {children}
     </main>

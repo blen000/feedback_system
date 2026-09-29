@@ -23,7 +23,21 @@ import { createQRCode } from "../src/server/services/qr";
 import { randomUUID } from "node:crypto";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
-const isProd = process.env.NODE_ENV === "production";
+/**
+ * Production mode: NODE_ENV=production, or the --production flag (`npm run db:seed:prod`).
+ * `prisma db seed` does not set NODE_ENV by itself, so a deployment must use the flag; otherwise
+ * demo users and sample data would be created.
+ */
+const isProd = process.env.NODE_ENV === "production" || process.argv.includes("--production");
+
+/** Demo accounts created for development only. */
+const DEMO_EMAILS = [
+  "sysadmin@bank.local",
+  "head@bank.local",
+  "district@bank.local",
+  "bole@bank.local",
+  "analyst@bank.local",
+];
 
 async function seedPermissionsAndRoles() {
   const newKeys: string[] = [];
@@ -99,14 +113,35 @@ async function upsertUser(
   password: string,
   roleKey: string,
   scope: { scopeType: ScopeType; districtId?: string; branchId?: string },
+  opts: { applyPassword: boolean; mustChangePassword: boolean },
 ) {
   const role = await prisma.role.findUniqueOrThrow({ where: { key: roleKey } });
   const passwordHash = await bcrypt.hash(password, 12);
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: {},
-    create: { email, name, passwordHash },
-  });
+  const existing = await prisma.user.findUnique({ where: { email } });
+  const user = existing
+    ? // An explicit SEED_PASSWORD is re-applied so the old password stops working; without one, existing accounts are left alone.
+      opts.applyPassword
+      ? await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            passwordHash,
+            mustChangePassword: opts.mustChangePassword,
+            status: "ACTIVE",
+            failedLoginCount: 0,
+            lockedUntil: null,
+            deletedAt: null,
+          },
+        })
+      : existing
+    : await prisma.user.create({
+        data: { email, name, passwordHash, mustChangePassword: opts.mustChangePassword },
+      });
+  if (existing && opts.applyPassword) {
+    await prisma.session.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }); // old sign-ins end
+  }
   const has = await prisma.userRole.count({ where: { userId: user.id } });
   if (!has) {
     await prisma.userRole.create({
@@ -260,32 +295,82 @@ async function main() {
   if (isProd && !configured) throw new Error("SEED_PASSWORD is required when seeding in production.");
   const password = configured ?? `Dev-${randomBytes(6).toString("hex")}9`;
 
-  await upsertUser("admin@bank.local", "Super Admin", password, "SUPER_ADMIN", { scopeType: "ALL" });
+  // With an explicit SEED_PASSWORD the seeded accounts are (re)set to it. In production the admin must
+  // choose their own password at first sign-in, so the shared seed password is only ever a bootstrap.
+  const opts = { applyPassword: !!configured, mustChangePassword: isProd };
+  await upsertUser("admin@bank.local", "Super Admin", password, "SUPER_ADMIN", { scopeType: "ALL" }, opts);
   if (!isProd) {
-    await upsertUser("sysadmin@bank.local", "System Admin", password, "SYSTEM_ADMIN", { scopeType: "ALL" });
-    await upsertUser("head@bank.local", "Head Office Manager", password, "HEAD_OFFICE_MANAGER", {
-      scopeType: "ALL",
+    const demo = { applyPassword: !!configured, mustChangePassword: false };
+    await upsertUser(
+      "sysadmin@bank.local",
+      "System Admin",
+      password,
+      "SYSTEM_ADMIN",
+      { scopeType: "ALL" },
+      demo,
+    );
+    await upsertUser(
+      "head@bank.local",
+      "Head Office Manager",
+      password,
+      "HEAD_OFFICE_MANAGER",
+      { scopeType: "ALL" },
+      demo,
+    );
+    await upsertUser(
+      "district@bank.local",
+      "District 1 Manager",
+      password,
+      "DISTRICT_MANAGER",
+      { scopeType: "DISTRICT", districtId: district.id },
+      demo,
+    );
+    await upsertUser(
+      "bole@bank.local",
+      "Bole Branch Manager",
+      password,
+      "BRANCH_MANAGER",
+      { scopeType: "BRANCH", branchId: bole.id },
+      demo,
+    );
+    await upsertUser(
+      "analyst@bank.local",
+      "Feedback Analyst",
+      password,
+      "FEEDBACK_ANALYST",
+      { scopeType: "ALL" },
+      demo,
+    );
+    await seedSample(district.id, bole.id);
+  } else {
+    // Production: no demo accounts may be usable. Any that exist from an earlier development
+    // database are deactivated (not deleted) and signed out; sample data is never created.
+    const demo = await prisma.user.findMany({
+      where: { email: { in: DEMO_EMAILS }, status: "ACTIVE" },
+      select: { id: true, email: true },
     });
-    await upsertUser("district@bank.local", "District 1 Manager", password, "DISTRICT_MANAGER", {
-      scopeType: "DISTRICT",
-      districtId: district.id,
-    });
-    await upsertUser("bole@bank.local", "Bole Branch Manager", password, "BRANCH_MANAGER", {
-      scopeType: "BRANCH",
-      branchId: bole.id,
-    });
-    await upsertUser("analyst@bank.local", "Feedback Analyst", password, "FEEDBACK_ANALYST", {
-      scopeType: "ALL",
-    });
+    if (demo.length) {
+      await prisma.user.updateMany({
+        where: { id: { in: demo.map((u) => u.id) } },
+        data: { status: "INACTIVE" },
+      });
+      await prisma.session.updateMany({
+        where: { userId: { in: demo.map((u) => u.id) }, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      console.log(`Deactivated demo accounts: ${demo.map((u) => u.email).join(", ")}`);
+    }
   }
 
-  if (!isProd) await seedSample(district.id, bole.id);
-
   console.log("Seed complete.");
-  if (!configured) {
+  if (configured) {
     console.log(
-      `Demo users (admin@bank.local, sysadmin@, head@, district@, bole@, analyst@ — all @bank.local)`,
+      isProd
+        ? "Super admin: admin@bank.local — signs in with SEED_PASSWORD and must choose a new password immediately."
+        : "Seeded accounts (admin@, sysadmin@, head@, district@, bole@, analyst@ — all @bank.local) now use SEED_PASSWORD.",
     );
+  } else {
+    console.log("Demo users (admin@, sysadmin@, head@, district@, bole@, analyst@ — all @bank.local)");
     console.log(`Password for newly created users: ${password}`);
     console.log(
       "(Users that already existed keep their previous password. Set SEED_PASSWORD to choose one.)",

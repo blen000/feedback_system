@@ -4,6 +4,7 @@ QR-based customer feedback for bank branches, districts and departments, with a 
 permission-controlled admin portal. Next.js (App Router) · TypeScript · Tailwind · shadcn/ui · Prisma 7 · PostgreSQL.
 
 - **Customers** scan a QR code and open `/f/[code]`: anonymous, no login, mobile-first, under a minute.
+- **Light / dark theme:** a Light · Dark · System switch is on every screen; it follows the OS by default and the choice is remembered in the browser. The printable QR sheet is always light.
 - **Staff** use `/admin`: questionnaires, QR codes, feedback (view and forward to a colleague), reports, users and roles. Every page, server action, route handler and service enforces RBAC and organizational scope on the server.
 
 ## Setup
@@ -19,8 +20,13 @@ npm run dev
 Generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 
 The seed prints a random password for the demo users (`admin@`, `sysadmin@`, `head@`, `district@`, `bole@`,
-`analyst@` — all `@bank.local`) and the sample QR link (`/f/XXXXXXXX`). Set `SEED_PASSWORD` to choose one.
-In production the seed requires `SEED_PASSWORD` and creates only the super admin.
+`analyst@` — all `@bank.local`) and the sample QR link (`/f/XXXXXXXX`). Set `SEED_PASSWORD` in `.env` to choose the
+password instead; it is re-applied to existing seeded accounts too, so an old password stops working.
+
+**Production:** run `npm run db:seed:prod` (not `db:seed`; `prisma db seed` does not set `NODE_ENV`). It requires
+`SEED_PASSWORD`, creates only `admin@bank.local` (forced to choose a new password at first sign-in), creates no demo
+data, and deactivates any demo accounts left over from a development database. Start production from a fresh
+database, and replace `admin@bank.local` with a real mailbox so "Forgot password" works.
 
 Set `NEXT_PUBLIC_APP_URL` to the real public domain **before printing QR codes** (it is embedded in them) and
 optionally `NEXT_PUBLIC_BANK_NAME` for the customer page header.
@@ -63,6 +69,7 @@ _location_; each location shows its currently ACTIVE questionnaire (branch/depar
 
 - **Sessions:** opaque 256-bit token in an `httpOnly`, `SameSite=Lax` cookie (`__Host-` + `Secure` in production);
   only an HMAC of the token is stored; 8 h hard limit, 30 min idle; revoked instantly on deactivation or password change.
+- **Email (SMTP):** with `SMTP_*` set, new users get an invitation link to choose their own password (nobody handles a password), and “Forgot password” emails a one-time link (60 min, single use, only a hash stored, identical answer whether or not the account exists, rate-limited, ends all sessions on success). Without SMTP the app falls back to administrator-set passwords. `SMTP_ALLOW_SELF_SIGNED=true` turns off certificate checking; use it only on a trusted network. Tests never send mail (in-memory capture driver).
 - **Login:** bcrypt, generic error messages, per-account lockout, per-source and per-account rate limits.
 - **Privilege escalation:** you can only grant/edit roles, assign scopes and manage users whose access you already hold.
 - **Public endpoint:** every answer is re-validated server-side with the shared engine; layered rate limits;

@@ -27,7 +27,7 @@ export default async function PrintQrPage({ params }: PageProps<"/admin/qr-print
   const svg = await qrSvg(qr.publicCode);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-6 p-8 text-center print:min-h-0 print:p-0">
+    <main className="bg-white text-neutral-900 mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-6 p-8 text-center print:min-h-0 print:p-0">
       <h1 className="text-3xl font-bold">How was your experience?</h1>
       <p className="text-lg">
         Scan the code with your phone camera to share your feedback. No sign-in needed.
