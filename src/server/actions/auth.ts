@@ -10,6 +10,7 @@ import {
   setSessionCookie,
 } from "@/lib/auth/session";
 import { changeOwnPassword, login, logout } from "@/server/services/auth";
+import { completePasswordReset, requestPasswordReset } from "@/server/services/password-reset";
 import type { ActionResult } from "./helpers";
 
 /** Only same-site relative paths under /admin are honored, preventing open redirects. */
@@ -65,4 +66,43 @@ export async function changePasswordAction(
     return { ok: false, error: "Something went wrong. Please try again." };
   }
   redirect("/admin/dashboard");
+}
+
+/**
+ * "Forgot password". The answer is identical whether or not the email belongs to an account
+ * (see requestPasswordReset), so this form cannot be used to discover who has one.
+ */
+export async function forgotPasswordAction(
+  _prev: ActionResult | undefined,
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await requestPasswordReset(formData.get("email"), await requestMeta());
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, error: e.message };
+    console.error("Password reset request failed unexpectedly", e);
+    return { ok: false, error: "Something went wrong. Please try again." };
+  }
+}
+
+export async function resetPasswordAction(
+  _prev: ActionResult | undefined,
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await completePasswordReset(
+      {
+        token: formData.get("token"),
+        newPassword: formData.get("newPassword"),
+        confirmPassword: formData.get("confirmPassword"),
+      },
+      await requestMeta(),
+    );
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, error: e.message, fieldErrors: e.fieldErrors };
+    console.error("Password reset failed unexpectedly", e);
+    return { ok: false, error: "Something went wrong. Please try again." };
+  }
+  redirect("/login?reset=1"); // outside try/catch: redirect() works by throwing
 }

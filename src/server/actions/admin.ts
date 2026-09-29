@@ -21,15 +21,14 @@ export async function deleteRoleAction(id: string) {
 }
 
 export async function createUserAction(input: unknown) {
-  return runAction(
-    async (ctx) => {
-      await users.createUser(ctx, input);
-    },
-    {
-      revalidate: ["/admin/users"],
-      message: "User created. They must change the password at first sign-in.",
-    },
-  );
+  // the message depends on whether an invitation email went out, so the UI toasts from the result
+  return runAction((ctx) => users.createUser(ctx, input), { revalidate: ["/admin/users"] });
+}
+export async function resendInviteAction(id: string) {
+  return runAction((ctx) => users.resendInvite(ctx, id), {
+    revalidate: ["/admin/users"],
+    message: "Invitation sent.",
+  });
 }
 export async function updateUserAction(id: string, input: unknown) {
   return runAction((ctx) => users.updateUser(ctx, id, input), {

@@ -3,6 +3,7 @@ import { AccessDenied, PageHeader } from "@/components/admin/page-header";
 import { UsersManager } from "@/components/admin/users-manager";
 import { pageAccess } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
+import { emailEnabled } from "@/lib/mail/mailer";
 import { listAssignmentOptions, listUsers } from "@/server/services/users";
 
 export const metadata: Metadata = { title: "Users" };
@@ -22,6 +23,7 @@ export default async function UsersPage() {
         canCreate={can(ctx, "user.create")}
         canUpdate={can(ctx, "user.update")}
         canDeactivate={can(ctx, "user.deactivate")}
+        emailEnabled={emailEnabled()}
         rows={users.map((u) => ({
           id: u.id,
           email: u.email,

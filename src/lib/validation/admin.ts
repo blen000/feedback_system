@@ -70,7 +70,8 @@ export const roleAssignmentsSchema = z.array(scopeSchema).min(1, "Assign at leas
 export const createUserSchema = z.object({
   email: emailSchema,
   name,
-  password: passwordSchema,
+  /** required only when email is not configured; otherwise the user chooses one via the invitation link */
+  password: passwordSchema.optional(),
   assignments: roleAssignmentsSchema,
 });
 

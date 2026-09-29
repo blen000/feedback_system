@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PlusIcon, XIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,7 @@ import { EmptyState } from "@/components/admin/page-header";
 import { useAction } from "@/components/admin/use-action";
 import {
   createUserAction,
+  resendInviteAction,
   resetPasswordAction,
   setUserActiveAction,
   updateUserAction,
@@ -58,12 +60,15 @@ export function UsersManager({
   canCreate,
   canUpdate,
   canDeactivate,
+  emailEnabled,
 }: {
   rows: UserRow[];
   options: Options | null;
   canCreate: boolean;
   canUpdate: boolean;
   canDeactivate: boolean;
+  /** true when the system can send email: new users receive an invitation link instead of an admin-set password */
+  emailEnabled: boolean;
 }) {
   const [editing, setEditing] = useState<UserRow | "new" | null>(null);
   const [tempPassword, setTempPassword] = useState<{ email: string; password: string } | null>(null);
@@ -122,6 +127,16 @@ export function UsersManager({
                         Edit
                       </Button>
                     ) : null}
+                    {emailEnabled && canUpdate && !u.isSelf && u.status === "ACTIVE" && !u.lastLoginAt ? (
+                      <ConfirmButton
+                        label="Resend invite"
+                        variant="outline"
+                        title={`Resend the invitation to ${u.email}?`}
+                        description="They will receive a new link to choose their password. Any earlier invitation stops working."
+                        confirmLabel="Send invitation"
+                        action={() => resendInviteAction(u.id)}
+                      />
+                    ) : null}
                     {canUpdate && !u.isSelf ? (
                       <ConfirmButton
                         label="Reset password"
@@ -167,6 +182,7 @@ export function UsersManager({
 
       {editing && options ? (
         <UserDialog
+          emailEnabled={emailEnabled}
           key={editing === "new" ? "new" : editing.id}
           row={editing === "new" ? null : editing}
           options={options}
@@ -206,10 +222,12 @@ const blank = (o: Options): Assignment => ({
 function UserDialog({
   row,
   options,
+  emailEnabled,
   onClose,
 }: {
   row: UserRow | null;
   options: Options;
+  emailEnabled: boolean;
   onClose: () => void;
 }) {
   const { run, pending, error, fieldErrors } = useAction();
@@ -261,17 +279,28 @@ function UserDialog({
           onSubmit={(e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
+            if (row) {
+              run(() => updateUserAction(row.id, { name: f.get("name"), assignments: items }), onClose);
+              return;
+            }
             run(
               () =>
-                row
-                  ? updateUserAction(row.id, { name: f.get("name"), assignments: items })
-                  : createUserAction({
-                      email: f.get("email"),
-                      name: f.get("name"),
-                      password: f.get("password"),
-                      assignments: items,
-                    }),
-              onClose,
+                createUserAction({
+                  email: f.get("email"),
+                  name: f.get("name"),
+                  password: emailEnabled ? undefined : f.get("password"),
+                  assignments: items,
+                }),
+              (res) => {
+                if (res?.inviteMode && res.emailSent)
+                  toast.success("User created. An invitation email was sent.");
+                else if (res?.inviteMode)
+                  toast.warning(
+                    "User created, but the invitation email could not be sent. Use “Resend invite”.",
+                  );
+                else toast.success("User created. They must change the password at first sign-in.");
+                onClose();
+              },
             );
           }}
         >
@@ -283,7 +312,12 @@ function UserDialog({
           <Field label="Full name" htmlFor="name" errors={fieldErrors.name}>
             <Input id="name" name="name" defaultValue={row?.name} required maxLength={120} />
           </Field>
-          {row ? null : (
+          {row ? null : emailEnabled ? (
+            <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+              An email with a link to choose a password will be sent to this address. You will not see or set
+              the password.
+            </p>
+          ) : (
             <Field
               label="Temporary password"
               htmlFor="password"

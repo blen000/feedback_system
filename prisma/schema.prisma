@@ -80,6 +80,7 @@ model User {
   notifications    Notification[]
   forwardsSent     FeedbackForward[] @relation("ForwardFrom")
   forwardsReceived FeedbackForward[] @relation("ForwardTo")
+  passwordTokens   PasswordToken[]
 
   @@index([status])
 }
@@ -529,4 +530,25 @@ model RateLimitBucket {
 
   @@id([key, windowStart])
   @@index([windowStart])
+}
+
+enum TokenPurpose {
+  INVITE // "set your password" link sent when an account is created
+  RESET // "forgot password" link
+}
+
+/// One-time password link. Only an HMAC of the emailed token is stored; it is single-use and expires.
+model PasswordToken {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  userId    String       @db.Uuid
+  tokenHash String       @unique
+  purpose   TokenPurpose
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
 }

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { writeAudit } from "@/lib/audit";
-import { generateTemporaryPassword, hashPassword } from "@/lib/auth/crypto";
+import { generateTemporaryPassword, generateToken, hashPassword } from "@/lib/auth/crypto";
+import { emailEnabled } from "@/lib/mail/mailer";
 import { conflict, forbidden, invalid, notFound } from "@/lib/errors";
 import {
   actorCoversRole,
@@ -14,6 +15,7 @@ import { createUserSchema, updateUserSchema, type ScopeInput } from "@/lib/valid
 import { parse } from "@/lib/validation/parse";
 import { Prisma } from "@/generated/prisma/client";
 import { revokeAllSessions } from "./auth";
+import { sendInvite } from "./password-reset";
 import { resolveTarget } from "./targets";
 
 const userInclude = {
@@ -160,30 +162,51 @@ const toRows = (list: ScopeInput[]) =>
 export async function createUser(ctx: AuthContext, input: unknown) {
   requirePermission(ctx, "user.create");
   const data = parse(createUserSchema, input);
+  // With email available the user chooses their own password from an invitation link, so nobody
+  // (including the administrator) ever handles it. Without email we fall back to an admin-set password.
+  const inviteMode = emailEnabled();
+  if (!inviteMode && !data.password) {
+    throw invalid("Please correct the highlighted fields.", { password: ["Enter a temporary password."] });
+  }
   await assertCanGrant(ctx, data.assignments);
+  let user;
   try {
-    const user = await prisma.user.create({
+    user = await prisma.user.create({
       data: {
         email: data.email,
         name: data.name,
-        passwordHash: await hashPassword(data.password),
+        // invite mode: an unguessable placeholder until the user sets a real password
+        passwordHash: await hashPassword(inviteMode ? generateToken() : data.password!),
         mustChangePassword: true,
         roles: { create: toRows(data.assignments) },
       },
     });
-    await writeAudit({
-      actorId: ctx.userId,
-      action: "USER_CREATED",
-      resource: "User",
-      resourceId: user.id,
-      metadata: { email: user.email, assignments: data.assignments },
-    });
-    return { id: user.id };
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
       throw conflict("A user with this email already exists.");
     throw e;
   }
+  await writeAudit({
+    actorId: ctx.userId,
+    action: "USER_CREATED",
+    resource: "User",
+    resourceId: user.id,
+    metadata: { email: user.email, assignments: data.assignments, invited: inviteMode },
+  });
+  // A failed email must not undo the account: report it so the administrator can resend.
+  const emailSent = inviteMode ? await sendInvite(user, ctx.userId) : null;
+  return { id: user.id, inviteMode, emailSent };
+}
+
+/** Emails a fresh "set your password" link to a user who has not signed in yet. */
+export async function resendInvite(ctx: AuthContext, id: string) {
+  requirePermission(ctx, "user.update");
+  if (!emailEnabled()) throw invalid("Email is not configured on this system.");
+  const user = await assertCanManage(ctx, id);
+  if (user.status !== "ACTIVE") throw invalid("Activate the user first.");
+  if (user.lastLoginAt) throw invalid("This user has already signed in. Use “Reset password” instead.");
+  if (!(await sendInvite(user, ctx.userId)))
+    throw invalid("The email could not be sent. Please try again later.");
 }
 
 export async function updateUser(ctx: AuthContext, id: string, input: unknown) {

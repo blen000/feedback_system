@@ -1,17 +1,34 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Link from "next/link";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { AuthField, authButton, authInput } from "./auth-field";
 import { loginAction } from "@/server/actions/auth";
 
-export function LoginForm({ next }: { next?: string }) {
+export function LoginForm({
+  next,
+  emailEnabled,
+  notice,
+}: {
+  next?: string;
+  emailEnabled: boolean;
+  notice?: string;
+}) {
   const [state, action, pending] = useActionState(loginAction, undefined);
   const [show, setShow] = useState(false);
   const [help, setHelp] = useState(false);
 
   return (
     <form action={action} className="grid gap-4">
+      {notice ? (
+        <p
+          role="status"
+          className="rounded-[6px] bg-green-100 px-3.5 py-2.5 text-sm text-green-900 dark:bg-green-950 dark:text-green-200"
+        >
+          {notice}
+        </p>
+      ) : null}
       {next ? <input type="hidden" name="next" value={next} /> : null}
 
       <AuthField label="Email" htmlFor="email">
@@ -31,14 +48,20 @@ export function LoginForm({ next }: { next?: string }) {
         label="Password"
         htmlFor="password"
         labelRight={
-          <button
-            type="button"
-            onClick={() => setHelp((h) => !h)}
-            aria-expanded={help}
-            className="text-sm text-[color:var(--brand-gold)] hover:underline"
-          >
-            Forgot password?
-          </button>
+          emailEnabled ? (
+            <Link href="/forgot-password" className="text-sm text-[color:var(--brand-gold)] hover:underline">
+              Forgot password?
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setHelp((h) => !h)}
+              aria-expanded={help}
+              className="text-sm text-[color:var(--brand-gold)] hover:underline"
+            >
+              Forgot password?
+            </button>
+          )
         }
         right={
           <button
