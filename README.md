@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bank Feedback & Customer Experience System
 
-## Getting Started
+QR-based customer feedback for bank branches, districts and departments, with a separate,
+permission-controlled admin portal. Next.js (App Router) · TypeScript · Tailwind · shadcn/ui · Prisma 7 · PostgreSQL.
 
-First, run the development server:
+- **Customers** scan a QR code and open `/f/[code]`: anonymous, no login, mobile-first, under a minute.
+- **Staff** use `/admin`: questionnaires, QR codes, feedback (view and forward to a colleague), reports, users and roles. Every page, server action, route handler and service enforces RBAC and organizational scope on the server.
+
+## Setup
 
 ```bash
+cp .env.example .env        # set DATABASE_URL and AUTH_SECRET (>= 32 chars)
+npm install
+npm run db:deploy           # apply migrations (prisma migrate deploy)
+npm run db:seed             # permissions, roles, sample organization, demo users, sample survey + QR
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The seed prints a random password for the demo users (`admin@`, `sysadmin@`, `head@`, `district@`, `bole@`,
+`analyst@` — all `@bank.local`) and the sample QR link (`/f/XXXXXXXX`). Set `SEED_PASSWORD` to choose one.
+In production the seed requires `SEED_PASSWORD` and creates only the super admin.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Set `NEXT_PUBLIC_APP_URL` to the real public domain **before printing QR codes** (it is embedded in them) and
+optionally `NEXT_PUBLIC_BANK_NAME` for the customer page header.
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Script                                  | Purpose                                                |
+| --------------------------------------- | ------------------------------------------------------ |
+| `npm run dev` / `build` / `start`       | Next.js                                                |
+| `npm run typecheck` / `lint` / `format` | TypeScript, ESLint, Prettier                           |
+| `npm test`                              | Vitest: unit + integration against the `.env` database |
+| `npm run db:migrate`                    | `prisma migrate dev` (needs shadow-database rights)    |
+| `npm run db:deploy`                     | `prisma migrate deploy`                                |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/lib/rbac         permission catalog, pure scope logic, authorize primitives
+src/lib/auth         password/session crypto, cookie handling (Next-only)
+src/lib/questionnaire  shared engine: question types, conditional logic, answer validation
+src/lib/export       CSV / Excel writers (formula-injection safe)
+src/server/services  business logic; every function takes the actor and authorizes first
+src/server/actions   thin "use server" wrappers: session → service → safe result
+src/app              routes (/f public, /admin staff, /login)
+prisma/              schema, migrations, seed
+tests/               unit + database integration tests (auth, RBAC, questionnaires, QR, feedback, security)
+```
 
-## Deploy on Vercel
+Authorization chain: session → active user → role assignments → permission → scope → action.
+Roles carry permissions only; a role _assignment_ carries a scope (bank / district / branch / department).
+Scoped reads are filtered in the database query, never in React, and out-of-scope ids return 404.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Questionnaires
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`DRAFT → PUBLISHED → ACTIVE ⇄ PAUSED → CLOSED`. Only drafts are editable. Publishing freezes an immutable
+version snapshot, so historical feedback always matches the form it was answered on. QR codes point to a
+_location_; each location shows its currently ACTIVE questionnaire (branch/department → district → bank-wide).
+
+## Security model
+
+- **Sessions:** opaque 256-bit token in an `httpOnly`, `SameSite=Lax` cookie (`__Host-` + `Secure` in production);
+  only an HMAC of the token is stored; 8 h hard limit, 30 min idle; revoked instantly on deactivation or password change.
+- **Login:** bcrypt, generic error messages, per-account lockout, per-source and per-account rate limits.
+- **Privilege escalation:** you can only grant/edit roles, assign scopes and manage users whose access you already hold.
+- **Public endpoint:** every answer is re-validated server-side with the shared engine; layered rate limits;
+  customer-safe error messages only; answers to hidden questions are dropped; contact details exist only on opt-in.
+- **Forwarding:** a user with `feedback.forward` can send a record they can see to an active colleague who holds `feedback.view`. It shares only that record; there are no assignments or statuses, just a read marker. The action is audited.
+- **Personal data:** phone numbers need the separate `feedback.view_contact` permission over the record's location.
+- **Exports:** limited to the intersection of the user's view and export scopes, audited, and neutralize spreadsheet formulas.
+- **Headers:** CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS, no-store on authenticated pages.
+- **Audit log:** logins, user/role/organization changes, questionnaire lifecycle, QR changes, exports, deletions. Secrets are never logged.
+- `tests/security.test.ts` fails if a new server action does not reject signed-out callers.
+
+### Deployment notes
+
+- Put the app behind a reverse proxy that **overwrites** `X-Forwarded-For` (rate limiting and IP hashing trust it) and terminates HTTPS.
+- CSP currently allows inline scripts (Next.js bootstrap). Tighten with per-request nonces via `proxy.ts` if your policy requires it.
+- Scans count page opens (repeat opens from a device within 5 min count once), not unique customers.
+- Reporting days follow East Africa Time (UTC+3), see `src/lib/time.ts`.
+
+## Migrations without shadow-database rights
+
+If the DB user cannot create databases, `prisma migrate dev` fails (P3014). Generate SQL with
+`prisma migrate diff --from-migrations … --to-schema … --script`, place it in a new
+`prisma/migrations/<timestamp>_<name>/migration.sql`, and apply with `npm run db:deploy`.

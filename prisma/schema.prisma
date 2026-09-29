@@ -1,0 +1,532 @@
+// Bank Feedback System — data model.
+// Conventions: UUIDv7 primary keys, createdAt/updatedAt everywhere, soft delete (deletedAt)
+// on records that other data references. Public URLs never use these ids (see QRCode.publicCode).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Organizational reach of a role assignment.
+enum ScopeType {
+  ALL // Head Office: the whole bank
+  DISTRICT // one district and all its branches
+  BRANCH // one branch
+  DEPARTMENT // one department
+}
+
+enum QuestionType {
+  YES_NO
+  STAR_RATING
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  SHORT_TEXT
+  LONG_TEXT
+  NUMBER
+  NPS
+  EMOJI_RATING
+}
+
+enum QuestionnaireStatus {
+  DRAFT
+  PUBLISHED
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+// ───────────────────── Identity, roles, permissions ─────────────────────
+
+model User {
+  id                 String     @id @default(uuid(7)) @db.Uuid
+  email              String     @unique // stored lower-case
+  name               String
+  passwordHash       String
+  status             UserStatus @default(ACTIVE)
+  mustChangePassword Boolean    @default(false)
+  failedLoginCount   Int        @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+
+  roles            UserRole[]
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+  forwardsSent     FeedbackForward[] @relation("ForwardFrom")
+  forwardsReceived FeedbackForward[] @relation("ForwardTo")
+
+  @@index([status])
+}
+
+model Role {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  key         String    @unique // e.g. SUPER_ADMIN
+  name        String
+  description String?
+  /// System roles are seeded; they can be edited but not deleted.
+  isSystem    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  permissions RolePermission[]
+  users       UserRole[]
+}
+
+model Permission {
+  id          String  @id @default(uuid(7)) @db.Uuid
+  key         String  @unique // e.g. feedback.view
+  group       String // e.g. feedback
+  description String?
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+/// A role granted to a user over an organizational scope.
+/// A permission from `role` only applies inside this assignment's scope.
+/// CHECK constraint (added in migration SQL): scope columns match scopeType.
+model UserRole {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  userId       String    @db.Uuid
+  roleId       String    @db.Uuid
+  scopeType    ScopeType
+  districtId   String?   @db.Uuid
+  branchId     String?   @db.Uuid
+  departmentId String?   @db.Uuid
+  createdAt    DateTime  @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role        @relation(fields: [roleId], references: [id])
+  district   District?   @relation(fields: [districtId], references: [id])
+  branch     Branch?     @relation(fields: [branchId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  @@index([userId])
+  @@index([roleId])
+}
+
+model Session {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  userId     String    @db.Uuid
+  /// HMAC-SHA256 of the opaque cookie token; the raw token is never stored.
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+  ipHash     String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ───────────────────────── Organization ─────────────────────────
+
+model District {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  code      String    @unique
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  branches    Branch[]
+  departments Department[]
+  qrCodes     QRCode[]
+  userRoles   UserRole[]
+  submissions FeedbackSubmission[]
+  assignments QuestionnaireAssignment[]
+}
+
+model Branch {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  districtId String    @db.Uuid
+  code       String    @unique
+  name       String
+  address    String?
+  city       String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  district    District                  @relation(fields: [districtId], references: [id])
+  qrCodes     QRCode[]
+  userRoles   UserRole[]
+  submissions FeedbackSubmission[]
+  assignments QuestionnaireAssignment[]
+
+  @@index([districtId])
+}
+
+/// districtId = null means the department belongs to Head Office.
+model Department {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  districtId String?   @db.Uuid
+  code       String    @unique
+  name       String
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  district    District?                 @relation(fields: [districtId], references: [id])
+  qrCodes     QRCode[]
+  userRoles   UserRole[]
+  submissions FeedbackSubmission[]
+  assignments QuestionnaireAssignment[]
+
+  @@index([districtId])
+}
+
+// ───────────────────── Questions & questionnaires ─────────────────────
+
+/// Reusable question library entry. Editing one never alters published versions
+/// (those hold an immutable snapshot, see QuestionnaireVersion.definition).
+model Question {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  type      QuestionType
+  /// Type-specific settings: { min, max, scale, ... }
+  config    Json         @default("{}")
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  deletedAt DateTime?
+
+  translations QuestionTranslation[]
+  options      QuestionOption[]
+  usages       QuestionnaireQuestion[]
+}
+
+model QuestionTranslation {
+  questionId  String  @db.Uuid
+  locale      String // "en", "am", ...
+  text        String
+  description String?
+  placeholder String?
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, locale])
+}
+
+model QuestionOption {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  questionId String  @db.Uuid
+  /// Stable machine value stored in answers.
+  value      String
+  sortOrder  Int
+  isActive   Boolean @default(true)
+
+  question     Question                    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  translations QuestionOptionTranslation[]
+
+  @@unique([questionId, value])
+}
+
+model QuestionOptionTranslation {
+  optionId String @db.Uuid
+  locale   String
+  label    String
+
+  option QuestionOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@id([optionId, locale])
+}
+
+model Questionnaire {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  status         QuestionnaireStatus @default(DRAFT)
+  defaultLocale  String              @default("en")
+  locales        String[]            @default(["en"])
+  /// Ask "may we contact you?" and (optionally) a phone number.
+  collectContact Boolean             @default(false)
+  /// Version number of the latest published snapshot (0 = never published).
+  latestVersion  Int                 @default(0)
+  createdById    String?             @db.Uuid
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  deletedAt      DateTime?
+
+  translations QuestionnaireTranslation[]
+  questions    QuestionnaireQuestion[]
+  versions     QuestionnaireVersion[]
+  assignments  QuestionnaireAssignment[]
+  submissions  FeedbackSubmission[]
+
+  @@index([status])
+}
+
+model QuestionnaireTranslation {
+  questionnaireId String  @db.Uuid
+  locale          String
+  title           String
+  description     String?
+
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+
+  @@id([questionnaireId, locale])
+}
+
+/// Working (draft) copy of a questionnaire's questions.
+/// `id` is the stable question reference used in answers across versions.
+model QuestionnaireQuestion {
+  id              String  @id @default(uuid(7)) @db.Uuid
+  questionnaireId String  @db.Uuid
+  questionId      String  @db.Uuid
+  sortOrder       Int
+  isRequired      Boolean @default(false)
+  isActive        Boolean @default(true)
+  /// The rating used for a submission's overall score (at most one per questionnaire).
+  isPrimaryRating Boolean @default(false)
+  /// Conditional visibility: { match: "all"|"any", rules: [{ questionRef, operator, value }] }
+  visibility      Json?
+  /// Per-questionnaire overrides of the library question's config (min/max/validation).
+  configOverride  Json?
+
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  question      Question      @relation(fields: [questionId], references: [id])
+
+  @@index([questionnaireId, sortOrder])
+}
+
+/// Immutable snapshot taken at publish time. Never updated after creation.
+model QuestionnaireVersion {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  questionnaireId String   @db.Uuid
+  version         Int
+  /// Full rendered definition: translations, questions, options, logic.
+  definition      Json
+  publishedById   String?  @db.Uuid
+  publishedAt     DateTime @default(now())
+
+  questionnaire Questionnaire        @relation(fields: [questionnaireId], references: [id])
+  submissions   FeedbackSubmission[]
+
+  @@unique([questionnaireId, version])
+}
+
+/// Which questionnaire a location shows. Most specific match wins:
+/// branch/department → district → bank-wide (all three null).
+/// Only an ACTIVE questionnaire is resolved.
+model QuestionnaireAssignment {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  questionnaireId String   @db.Uuid
+  districtId      String?  @db.Uuid
+  branchId        String?  @db.Uuid
+  departmentId    String?  @db.Uuid
+  createdAt       DateTime @default(now())
+
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  district      District?     @relation(fields: [districtId], references: [id])
+  branch        Branch?       @relation(fields: [branchId], references: [id])
+  department    Department?   @relation(fields: [departmentId], references: [id])
+
+  @@index([questionnaireId])
+  @@index([branchId])
+  @@index([districtId])
+  @@index([departmentId])
+}
+
+// ───────────────────────────── QR codes ─────────────────────────────
+
+/// Points at a location, not a questionnaire. Exactly one of district/branch/department
+/// is set (CHECK constraint added in migration SQL).
+model QRCode {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  /// Random, non-sequential public identifier used in /f/[publicCode].
+  publicCode   String    @unique
+  label        String
+  districtId   String?   @db.Uuid
+  branchId     String?   @db.Uuid
+  departmentId String?   @db.Uuid
+  isActive     Boolean   @default(true)
+  createdById  String?   @db.Uuid
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  district    District?            @relation(fields: [districtId], references: [id])
+  branch      Branch?              @relation(fields: [branchId], references: [id])
+  department  Department?          @relation(fields: [departmentId], references: [id])
+  scans       QRScan[]
+  submissions FeedbackSubmission[]
+
+  @@index([branchId])
+  @@index([districtId])
+  @@index([departmentId])
+}
+
+/// One row per page open. Not a unique-customer count.
+model QRScan {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  qrCodeId  String   @db.Uuid
+  scannedAt DateTime @default(now())
+
+  qrCode QRCode @relation(fields: [qrCodeId], references: [id], onDelete: Cascade)
+
+  @@index([qrCodeId, scannedAt])
+}
+
+// ───────────────────────────── Feedback ─────────────────────────────
+
+model FeedbackSubmission {
+  id              String     @id @default(uuid(7)) @db.Uuid
+  questionnaireId String     @db.Uuid
+  versionId       String     @db.Uuid
+  qrCodeId        String?    @db.Uuid
+  /// Location snapshot at submission time (denormalized for scoped queries & history).
+  districtId      String?    @db.Uuid
+  branchId        String?    @db.Uuid
+  departmentId    String?    @db.Uuid
+  locale          String     @default("en")
+  /// Overall rating normalized to 1–5 from the primary rating question, if any.
+  overallRating   Float?
+  sentiment       Sentiment?
+  /// Only set when the questionnaire has collectContact and the customer opted in.
+  wantsFollowUp   Boolean    @default(false)
+  contactPhone    String?
+  ipHash          String?
+  submittedAt     DateTime   @default(now())
+  deletedAt       DateTime?
+
+  questionnaire Questionnaire        @relation(fields: [questionnaireId], references: [id])
+  version       QuestionnaireVersion @relation(fields: [versionId], references: [id])
+  qrCode        QRCode?              @relation(fields: [qrCodeId], references: [id])
+  district      District?            @relation(fields: [districtId], references: [id])
+  branch        Branch?              @relation(fields: [branchId], references: [id])
+  department    Department?          @relation(fields: [departmentId], references: [id])
+  answers       FeedbackAnswer[]
+  forwards      FeedbackForward[]
+
+  @@index([submittedAt])
+  @@index([branchId, submittedAt])
+  @@index([districtId, submittedAt])
+  @@index([departmentId, submittedAt])
+  @@index([questionnaireId, submittedAt])
+  @@index([qrCodeId])
+}
+
+model FeedbackAnswer {
+  id           String       @id @default(uuid(7)) @db.Uuid
+  submissionId String       @db.Uuid
+  /// QuestionnaireQuestion.id at publish time; the question text lives in the version snapshot.
+  questionRef  String       @db.Uuid
+  questionType QuestionType
+  valueText    String?
+  valueNumber  Float?
+  /// Selected option values (single choice → one element, yes/no → ["yes"|"no"]).
+  valueOptions String[]     @default([])
+
+  submission FeedbackSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, questionRef])
+  @@index([questionRef])
+}
+
+// ───────────────────── Forwarding & notifications ─────────────────────
+
+/// A feedback record shared with a colleague. Grants that recipient view access to this one record
+/// (contact details stay hidden unless they hold feedback.view_contact). No status: only a read marker.
+model FeedbackForward {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  feedbackId String    @db.Uuid
+  fromUserId String    @db.Uuid
+  toUserId   String    @db.Uuid
+  note       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  feedback FeedbackSubmission @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  from     User               @relation("ForwardFrom", fields: [fromUserId], references: [id])
+  to       User               @relation("ForwardTo", fields: [toUserId], references: [id])
+
+  @@unique([feedbackId, toUserId])
+  @@index([toUserId, readAt])
+}
+
+model Notification {
+  id        String              @id @default(uuid(7)) @db.Uuid
+  userId    String              @db.Uuid
+  channel   NotificationChannel @default(IN_APP)
+  type      String // e.g. LOW_RATING, QUESTIONNAIRE_PUBLISHED
+  title     String
+  body      String?
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+// ───────────────────────────── Audit & abuse control ─────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  actorId    String?  @db.Uuid
+  action     String // e.g. USER_CREATED
+  resource   String // e.g. User
+  resourceId String?
+  metadata   Json?
+  ipHash     String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([resource, resourceId])
+}
+
+/// Postgres-backed fixed-window rate limiter (no Redis needed for the MVP).
+model RateLimitBucket {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
+}
