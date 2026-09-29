@@ -1,26 +1,162 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  /* Brand: brown #823e16 (primary) and gold #e99d02 (accent) on a warm cream ground */
+  --brand-brown: #823e16;
+  --brand-gold: #e99d02;
+  --brand-cream: #f5f2ed;
+
+  /* data-viz tokens (single-series charts use the brand brown) */
+  --viz-1: #823e16;
+  --viz-2: #e99d02;
+  --viz-grid: #e8e2d9;
+  --viz-axis: #cfc6b8;
+  --viz-text: #5f5647;
+  --viz-surface: #ffffff;
+  --viz-good: #0ca30c;
+  --viz-warn: #fab219;
+  --viz-bad: #d03b3b;
+
+  --background: #f5f2ed;
+  --foreground: #1d1a17;
+  --card: #ffffff;
+  --card-foreground: #1d1a17;
+  --popover: #ffffff;
+  --popover-foreground: #1d1a17;
+  --primary: #823e16;
+  --primary-foreground: #ffffff;
+  --secondary: #f3ece2;
+  --secondary-foreground: #5b2a0e;
+  --muted: #f3eee6;
+  --muted-foreground: #6b6357;
+  --accent: #fbf0d6;
+  --accent-foreground: #5b2a0e;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e8e2d9;
+  --input: #e3dccf;
+  --ring: #e99d02;
+  --chart-1: #823e16;
+  --chart-2: #e99d02;
+  --chart-3: #b45a24;
+  --chart-4: #c9a15a;
+  --chart-5: #5b2a0e;
+  --radius: 1rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1d1a17;
+  --sidebar-primary: #823e16;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fbf0d6;
+  --sidebar-accent-foreground: #5b2a0e;
+  --sidebar-border: #e8e2d9;
+  --sidebar-ring: #e99d02;
+}
+
+.dark {
+  --viz-1: #e99d02;
+  --viz-2: #d98b5f;
+  --viz-grid: #2f2923;
+  --viz-axis: #443b31;
+  --viz-text: #d3c9b8;
+  --viz-surface: #231e19;
+
+  --background: #16120f;
+  --foreground: #f5efe6;
+  --card: #231e19;
+  --card-foreground: #f5efe6;
+  --popover: #231e19;
+  --popover-foreground: #f5efe6;
+  --primary: #e99d02;
+  --primary-foreground: #2a1706;
+  --secondary: #2f2721;
+  --secondary-foreground: #f5efe6;
+  --muted: #2a231d;
+  --muted-foreground: #b8ac9a;
+  --accent: #3a2c1a;
+  --accent-foreground: #f5efe6;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: #38302a;
+  --input: #443a31;
+  --ring: #e99d02;
+  --chart-1: #e99d02;
+  --chart-2: #d98b5f;
+  --chart-3: #b45a24;
+  --chart-4: #c9a15a;
+  --chart-5: #823e16;
+  --sidebar: #1d1815;
+  --sidebar-foreground: #f5efe6;
+  --sidebar-primary: #e99d02;
+  --sidebar-primary-foreground: #2a1706;
+  --sidebar-accent: #3a2c1a;
+  --sidebar-accent-foreground: #f5efe6;
+  --sidebar-border: #38302a;
+  --sidebar-ring: #e99d02;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Warm cream honeycomb ground used on sign-in and other standalone screens */
+.honeycomb {
+  background-color: var(--background);
+  background-image: url("data:image/svg+xml,%3Csvg width='120' height='210' viewBox='0 0 28 49' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23e7e0d4' fill-opacity='0.5' fill-rule='evenodd'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z'/%3E%3C/g%3E%3C/svg%3E");
+}
+.dark .honeycomb {
+  background-image: url("data:image/svg+xml,%3Csvg width='120' height='210' viewBox='0 0 28 49' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.05' fill-rule='evenodd'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z'/%3E%3C/g%3E%3C/svg%3E");
 }
