@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { validateSubmission, visibleRefs } from "@/lib/questionnaire/engine";
 import { normalizePhone, PHONE_MESSAGE } from "@/lib/validation/phone";
 import {
+  DEFAULT_LAYOUT,
   EMOJI_SCALE,
   SUPPORTED_LOCALES,
   pick,
@@ -25,6 +26,10 @@ export interface FormSubmission {
  * Customer-facing questionnaire. Used by the admin preview and the public page.
  * Client-side validation here is for usability only — the server re-validates everything.
  */
+/** Single-tap answers move on by themselves; text, number and multiple choice need an explicit Next. */
+const AUTO_ADVANCE = new Set(["YES_NO", "STAR_RATING", "EMOJI_RATING", "NPS", "SINGLE_CHOICE"]);
+const AUTO_ADVANCE_MS = 350;
+
 export function QuestionnaireForm({
   definition,
   onSubmit,
@@ -44,11 +49,34 @@ export function QuestionnaireForm({
   const [wantsFollowUp, setWantsFollowUp] = useState(false);
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState(0);
+  const [contactStep, setContactStep] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  const stepMode = (definition.layout ?? DEFAULT_LAYOUT) === "ONE_AT_A_TIME";
   const visible = useMemo(() => visibleRefs(definition, answers), [definition, answers]);
   const shown = definition.questions.filter((q) => visible.has(q.ref));
   const answered = shown.filter((q) => !isBlank(answers[q.ref])).length;
   const allErrors = { ...errors, ...serverErrors };
+
+  const index = Math.min(step, Math.max(shown.length - 1, 0));
+  const current = shown[index];
+  const isLast = index >= shown.length - 1;
+  // with no questions at all, only the contact/submit screen remains
+  const onContact = stepMode && (contactStep || shown.length === 0);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  // a server-side rejection of an answer takes the customer back to that question
+  const [seenServerErrors, setSeenServerErrors] = useState(serverErrors);
+  if (serverErrors !== seenServerErrors) {
+    setSeenServerErrors(serverErrors);
+    const i = stepMode && serverErrors ? shown.findIndex((q) => serverErrors[q.ref]) : -1;
+    if (i >= 0) {
+      setContactStep(false);
+      setStep(i);
+    }
+  }
 
   function set(ref: string, value: unknown) {
     setAnswers((a) => {
@@ -60,8 +88,51 @@ export function QuestionnaireForm({
     setErrors((e) => (ref in e ? Object.fromEntries(Object.entries(e).filter(([k]) => k !== ref)) : e));
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  /** Records an answer; in step mode a single-tap answer moves to the next screen after a short pause. */
+  function answer(q: DefinitionQuestion, value: unknown) {
+    set(q.ref, value);
+    if (!stepMode || !AUTO_ADVANCE.has(q.type) || isBlank(value)) return;
+    // the answer can reveal or hide later questions, so look ahead with the new answer
+    const nextVisible = visibleRefs(definition, { ...answers, [q.ref]: value });
+    const list = definition.questions.filter((x) => nextVisible.has(x.ref));
+    const at = list.findIndex((x) => x.ref === q.ref);
+    clearTimeout(timer.current);
+    if (at < list.length - 1) timer.current = setTimeout(() => setStep(at + 1), AUTO_ADVANCE_MS);
+    else if (definition.collectContact)
+      timer.current = setTimeout(() => setContactStep(true), AUTO_ADVANCE_MS);
+  }
+
+  /** Next from the current question. Required questions must be answered first; optional ones may be blank. */
+  function next() {
+    if (!current) return;
+    clearTimeout(timer.current);
+    const result = validateSubmission(definition, answers);
+    const message = result.ok ? undefined : result.errors[current.ref];
+    if (message) {
+      setErrors((e) => ({ ...e, [current.ref]: message }));
+      return;
+    }
+    if (!isLast) setStep(index + 1);
+    else if (definition.collectContact) setContactStep(true);
+    else void send();
+  }
+
+  function skip() {
+    if (!current) return;
+    clearTimeout(timer.current);
+    set(current.ref, undefined);
+    if (!isLast) setStep(index + 1);
+    else if (definition.collectContact) setContactStep(true);
+    else void send();
+  }
+
+  function back() {
+    clearTimeout(timer.current);
+    if (contactStep && shown.length > 0) setContactStep(false);
+    else setStep(Math.max(index - 1, 0));
+  }
+
+  async function send() {
     const result = validateSubmission(definition, answers);
     const found: Record<string, string> = result.ok ? {} : result.errors;
     if (wantsFollowUp && definition.collectContact && !normalizePhone(phone)) {
@@ -69,9 +140,16 @@ export function QuestionnaireForm({
     }
     setErrors(found);
     if (Object.keys(found).length) {
-      document
-        .getElementById(`q-${Object.keys(found)[0]}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const first = Object.keys(found)[0];
+      if (stepMode) {
+        const i = shown.findIndex((q) => q.ref === first);
+        if (i >= 0) {
+          setContactStep(false);
+          setStep(i);
+        }
+      } else {
+        document.getElementById(`q-${first}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
       return;
     }
     setSubmitting(true);
@@ -89,11 +167,60 @@ export function QuestionnaireForm({
     }
   }
 
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    // Enter in a text field moves forward in step mode; only the last screen submits
+    if (stepMode && !onContact) next();
+    else void send();
+  }
+
   const title = pick(definition.title, locale, definition.defaultLocale);
   const description = pick(definition.description, locale, definition.defaultLocale);
 
+  const contactSection = definition.collectContact ? (
+    <section className="space-y-3 rounded-xl border bg-card p-4">
+      <label className="flex items-start gap-3 text-base">
+        <input
+          type="checkbox"
+          className="mt-1 size-5"
+          checked={wantsFollowUp}
+          onChange={(e) => setWantsFollowUp(e.target.checked)}
+        />
+        <span>Would you like us to contact you about this feedback?</span>
+      </label>
+      {wantsFollowUp ? (
+        <div className="space-y-1">
+          <label htmlFor="contact-phone" className="text-sm font-medium">
+            Phone number
+          </label>
+          <input
+            id="contact-phone"
+            type="tel"
+            inputMode="tel"
+            maxLength={30}
+            autoComplete="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className="h-12 w-full rounded-lg border bg-background px-3 text-base"
+          />
+          {allErrors._phone ? (
+            <p role="alert" className="text-sm text-destructive">
+              {allErrors._phone}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  ) : null;
+
+  const primary =
+    "h-14 flex-1 rounded-xl bg-primary text-lg font-medium text-primary-foreground disabled:opacity-60";
+
+  // progress: "2/5" in step mode; the contact screen counts as complete
+  const position = onContact ? shown.length : index + 1;
+
   return (
-    <form onSubmit={submit} noValidate className="mx-auto w-full max-w-xl space-y-6">
+    <form onSubmit={handleSubmit} noValidate className="mx-auto w-full max-w-xl space-y-6">
       <header className="space-y-2">
         {definition.locales.length > 1 ? (
           <div className="flex gap-2" role="group" aria-label="Language">
@@ -114,8 +241,29 @@ export function QuestionnaireForm({
           </div>
         ) : null}
         <h1 className="text-2xl font-semibold leading-tight">{title}</h1>
-        {description ? <p className="text-base text-muted-foreground">{description}</p> : null}
-        {shown.length > 4 ? (
+        {description && !(stepMode && step > 0) ? (
+          <p className="text-base text-muted-foreground">{description}</p>
+        ) : null}
+        {stepMode && shown.length > 0 ? (
+          <div className="pt-1">
+            <div
+              className="h-1.5 overflow-hidden rounded-full bg-[#e3dccf] dark:bg-muted"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={shown.length}
+              aria-valuenow={position}
+              aria-label="Progress"
+            >
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${(position / shown.length) * 100}%` }}
+              />
+            </div>
+            <p className="mt-1 text-sm font-medium text-muted-foreground" aria-live="polite">
+              {position}/{shown.length}
+            </p>
+          </div>
+        ) : !stepMode && shown.length > 4 ? (
           <div className="pt-1">
             <div
               className="h-1.5 overflow-hidden rounded-full bg-[#e3dccf] dark:bg-muted"
@@ -136,67 +284,93 @@ export function QuestionnaireForm({
         ) : null}
       </header>
 
-      {shown.map((q, i) => (
-        <QuestionBlock
-          key={q.ref}
-          q={q}
-          index={i + 1}
-          locale={locale}
-          defaultLocale={definition.defaultLocale}
-          value={answers[q.ref]}
-          error={allErrors[q.ref]}
-          onChange={(v) => set(q.ref, v)}
-        />
-      ))}
-
-      {definition.collectContact ? (
-        <section className="space-y-3 rounded-xl border bg-card p-4">
-          <label className="flex items-start gap-3 text-base">
-            <input
-              type="checkbox"
-              className="mt-1 size-5"
-              checked={wantsFollowUp}
-              onChange={(e) => setWantsFollowUp(e.target.checked)}
+      {stepMode ? (
+        <>
+          {onContact ? (
+            contactSection
+          ) : current ? (
+            <QuestionBlock
+              key={current.ref}
+              q={current}
+              index={index + 1}
+              locale={locale}
+              defaultLocale={definition.defaultLocale}
+              value={answers[current.ref]}
+              error={allErrors[current.ref]}
+              onChange={(v) => answer(current, v)}
             />
-            <span>Would you like us to contact you about this feedback?</span>
-          </label>
-          {wantsFollowUp ? (
-            <div className="space-y-1">
-              <label htmlFor="contact-phone" className="text-sm font-medium">
-                Phone number
-              </label>
-              <input
-                id="contact-phone"
-                type="tel"
-                inputMode="tel"
-                maxLength={30}
-                autoComplete="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="h-12 w-full rounded-lg border bg-background px-3 text-base"
-              />
-              {allErrors._phone ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {allErrors._phone}
-                </p>
+          ) : null}
+
+          {allErrors._ ? (
+            <p role="alert" className="text-sm text-destructive">
+              {allErrors._}
+            </p>
+          ) : null}
+
+          {onContact ? (
+            <div className="flex gap-3">
+              {shown.length > 0 ? (
+                <button type="button" onClick={back} className="h-14 rounded-xl border px-6 text-base">
+                  Back
+                </button>
               ) : null}
+              <button type="submit" disabled={disabled || submitting} className={primary}>
+                {submitting ? "Sending…" : submitLabel}
+              </button>
+            </div>
+          ) : current ? (
+            <div className="flex gap-3">
+              {index > 0 ? (
+                <button type="button" onClick={back} className="h-14 rounded-xl border px-6 text-base">
+                  Back
+                </button>
+              ) : null}
+              {!current.required && isBlank(answers[current.ref]) ? (
+                <button
+                  type="button"
+                  onClick={skip}
+                  disabled={disabled || submitting}
+                  className="h-14 flex-1 rounded-xl border text-lg font-medium disabled:opacity-60"
+                >
+                  {isLast && !definition.collectContact ? "Skip and submit" : "Skip"}
+                </button>
+              ) : (
+                <button type="submit" disabled={disabled || submitting} className={primary}>
+                  {isLast && !definition.collectContact ? (submitting ? "Sending…" : submitLabel) : "Next"}
+                </button>
+              )}
             </div>
           ) : null}
-        </section>
-      ) : null}
-
-      {allErrors._ ? (
-        <p role="alert" className="text-sm text-destructive">
-          {allErrors._}
-        </p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={disabled || submitting}
-        className="h-14 w-full rounded-xl bg-primary text-lg font-medium text-primary-foreground disabled:opacity-60"
-      >
-        {submitting ? "Sending…" : submitLabel}
-      </button>
+        </>
+      ) : (
+        <>
+          {shown.map((q, i) => (
+            <QuestionBlock
+              key={q.ref}
+              q={q}
+              index={i + 1}
+              locale={locale}
+              defaultLocale={definition.defaultLocale}
+              value={answers[q.ref]}
+              error={allErrors[q.ref]}
+              onChange={(v) => set(q.ref, v)}
+            />
+          ))}
+          {contactSection}
+          {allErrors._ ? (
+            <p role="alert" className="text-sm text-destructive">
+              {allErrors._}
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={disabled || submitting}
+            className="h-14 w-full rounded-xl bg-primary text-lg font-medium text-primary-foreground disabled:opacity-60"
+          >
+            {submitting ? "Sending…" : submitLabel}
+          </button>
+        </>
+      )}
     </form>
   );
 }

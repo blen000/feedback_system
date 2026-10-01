@@ -69,7 +69,7 @@ function locationLabel(s: WithLocation) {
     branch: s.branch?.name ?? null,
     district: s.branch?.district.name ?? s.district?.name ?? null,
     department: s.department?.name ?? null,
-    label: s.branch?.name ?? s.department?.name ?? s.district?.name ?? "—",
+    label: s.branch?.name ?? s.department?.name ?? s.district?.name ?? "Entire bank",
   };
 }
 

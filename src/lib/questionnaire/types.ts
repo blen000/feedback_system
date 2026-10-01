@@ -93,12 +93,18 @@ export interface DefinitionQuestion {
   visibility: Visibility | null;
 }
 
+export const QUESTIONNAIRE_LAYOUTS = ["ONE_AT_A_TIME", "SCROLL"] as const;
+export type QuestionnaireLayout = (typeof QUESTIONNAIRE_LAYOUTS)[number];
+export const DEFAULT_LAYOUT: QuestionnaireLayout = "ONE_AT_A_TIME";
+
 export interface QuestionnaireDefinition {
   questionnaireId: string;
   version: number;
   defaultLocale: string;
   locales: string[];
   collectContact: boolean;
+  /** Absent in versions published before layouts existed: treated as ONE_AT_A_TIME. */
+  layout?: QuestionnaireLayout;
   title: Localized;
   description: Localized;
   questions: DefinitionQuestion[];

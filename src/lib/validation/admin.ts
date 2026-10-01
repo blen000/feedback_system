@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { emailSchema, passwordSchema } from "./auth";
+import { locationIdSchema } from "./location";
 
 const uuid = z.string().uuid();
 const code = z
@@ -50,9 +51,9 @@ export const scopeSchema = z
   .object({
     roleId: uuid,
     scopeType: z.enum(["ALL", "DISTRICT", "BRANCH", "DEPARTMENT"]),
-    districtId: uuid.optional().nullable(),
-    branchId: uuid.optional().nullable(),
-    departmentId: uuid.optional().nullable(),
+    districtId: locationIdSchema.optional().nullable(),
+    branchId: locationIdSchema.optional().nullable(),
+    departmentId: locationIdSchema.optional().nullable(),
   })
   .superRefine((v, ctx) => {
     const need = { ALL: null, DISTRICT: "districtId", BRANCH: "branchId", DEPARTMENT: "departmentId" }[

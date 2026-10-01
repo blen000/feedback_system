@@ -123,7 +123,8 @@ export async function listForwardedToMe(ctx: AuthContext) {
     read: !!r.readAt,
     forwardedAt: r.createdAt,
     submittedAt: r.feedback.submittedAt,
-    location: r.feedback.branch?.name ?? r.feedback.department?.name ?? r.feedback.district?.name ?? "—",
+    location:
+      r.feedback.branch?.name ?? r.feedback.department?.name ?? r.feedback.district?.name ?? "Entire bank",
     overallRating: r.feedback.overallRating,
     sentiment: r.feedback.sentiment,
   }));

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormError, NativeSelect } from "@/components/admin/form-bits";
 import { useAction } from "@/components/admin/use-action";
+import { ALL_LOCATIONS } from "@/lib/validation/location";
 import { setAssignmentsAction } from "@/server/actions/questionnaires";
 
 type ScopeType = "ALL" | "DISTRICT" | "BRANCH" | "DEPARTMENT";
@@ -53,15 +54,22 @@ export function AssignmentsCard({
   const [target, setTarget] = useState("");
 
   function add() {
-    const picked = scope === "ALL" ? undefined : target || list?.[0]?.id;
+    const picked = scope === "ALL" ? undefined : target || ALL_LOCATIONS;
     if (scope !== "ALL" && !picked) return;
+    const noun = scope === "DISTRICT" ? "District" : scope === "BRANCH" ? "Branch" : "Department";
     const name = list?.find((l) => l.id === picked)?.name ?? "";
     const label =
       scope === "ALL"
         ? "Entire bank (default)"
-        : `${scope === "DISTRICT" ? "District" : scope === "BRANCH" ? "Branch" : "Department"}: ${name}`;
+        : picked === ALL_LOCATIONS
+          ? `All ${noun.toLowerCase()}${noun === "Branch" ? "es" : "s"}`
+          : `${noun}: ${name}`;
     if (items.some((i) => i.scopeType === scope && i.id === picked)) return;
-    setItems((cur) => [...cur, { scopeType: scope, id: picked, label }]);
+    setItems((cur) => [
+      // "All" supersedes individually listed locations of the same kind
+      ...(picked === ALL_LOCATIONS ? cur.filter((i) => i.scopeType !== scope) : cur),
+      { scopeType: scope, id: picked, label },
+    ]);
     setDirty(true);
   }
 
@@ -123,9 +131,16 @@ export function AssignmentsCard({
               <NativeSelect
                 className="w-auto min-w-40"
                 aria-label="Location"
-                value={target || list?.[0]?.id || ""}
+                value={target || ALL_LOCATIONS}
                 onChange={(e) => setTarget(e.target.value)}
               >
+                <option value={ALL_LOCATIONS}>
+                  {scope === "DISTRICT"
+                    ? "All districts"
+                    : scope === "BRANCH"
+                      ? "All branches"
+                      : "All departments"}
+                </option>
                 {list?.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}

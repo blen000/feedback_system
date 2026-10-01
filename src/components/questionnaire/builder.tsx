@@ -13,6 +13,7 @@ import { FormError, NativeSelect } from "@/components/admin/form-bits";
 import { useAction } from "@/components/admin/use-action";
 import { AssignmentsCard, type LocationOptions } from "./assignments-card";
 import { ConditionEditor } from "./condition-editor";
+import { LayoutField } from "./layout-field";
 import { LocalizedInput } from "./localized-input";
 import { PreviewDialog } from "./preview-dialog";
 import { QuestionDialog } from "./questions-manager";
@@ -313,6 +314,14 @@ export function QuestionnaireBuilder({
               />
               Offer optional follow-up contact (phone)
             </label>
+            <LayoutField
+              value={meta.layout}
+              disabled={!editable}
+              onChange={(layout) => {
+                setMeta((m) => ({ ...m, layout }));
+                setDirty(true);
+              }}
+            />
           </div>
         </CardContent>
       </Card>

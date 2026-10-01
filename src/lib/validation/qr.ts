@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { locationIdSchema } from "./location";
 
 export const createQrSchema = z.object({
   label: z.string().trim().min(2, "Enter a label.").max(120),
   scopeType: z.enum(["DISTRICT", "BRANCH", "DEPARTMENT"]),
-  locationId: z.string().uuid("Select a location."),
+  locationId: locationIdSchema,
 });
 
 export const updateQrSchema = z.object({

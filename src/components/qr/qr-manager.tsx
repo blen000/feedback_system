@@ -20,6 +20,7 @@ import { ConfirmButton } from "@/components/admin/confirm-dialog";
 import { Field, FormError, NativeSelect } from "@/components/admin/form-bits";
 import { EmptyState } from "@/components/admin/page-header";
 import { useAction } from "@/components/admin/use-action";
+import { ALL_LOCATIONS } from "@/lib/validation/location";
 import { createQrAction, deleteQrAction, regenerateQrAction, updateQrAction } from "@/server/actions/qr";
 
 export interface QrRow {
@@ -41,7 +42,11 @@ interface Locations {
   districts: { id: string; name: string }[];
   branches: { id: string; name: string }[];
   departments: { id: string; name: string }[];
+  canAll: boolean;
 }
+
+/** "Branch: Bole", or just "All branches" for a shared code. */
+const locLabel = (l: { type: string; name: string }) => (l.type === "All" ? l.name : `${l.type}: ${l.name}`);
 
 export function QrManager({
   rows,
@@ -103,7 +108,7 @@ export function QrManager({
                   <TableCell>
                     <div className="font-medium">{r.label}</div>
                     <div className="text-xs text-muted-foreground">
-                      {r.location.type}: {r.location.name}
+                      {locLabel(r.location)}
                       {r.location.parent ? ` · ${r.location.parent}` : ""}
                     </div>
                   </TableCell>
@@ -170,7 +175,7 @@ function ViewDialog({ row, onClose }: { row: QrRow; onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>{row.label}</DialogTitle>
           <DialogDescription>
-            {row.location.type}: {row.location.name}
+            {locLabel(row.location)}
             {row.location.parent ? ` · ${row.location.parent}` : ""}
           </DialogDescription>
         </DialogHeader>
@@ -225,12 +230,15 @@ function ViewDialog({ row, onClose }: { row: QrRow; onClose: () => void }) {
 function CreateDialog({ locations, onClose }: { locations: Locations; onClose: () => void }) {
   const { run, pending, error, fieldErrors } = useAction();
   const kinds = [
-    { type: "BRANCH" as const, label: "Branch", list: locations.branches },
-    { type: "DISTRICT" as const, label: "District", list: locations.districts },
-    { type: "DEPARTMENT" as const, label: "Department", list: locations.departments },
+    { type: "BRANCH" as const, label: "Branch", all: "All branches", list: locations.branches },
+    { type: "DISTRICT" as const, label: "District", all: "All districts", list: locations.districts },
+    { type: "DEPARTMENT" as const, label: "Department", all: "All departments", list: locations.departments },
   ].filter((k) => k.list.length > 0);
   const [kind, setKind] = useState(kinds[0]?.type ?? "BRANCH");
-  const list = kinds.find((k) => k.type === kind)?.list ?? [];
+  const current = kinds.find((k) => k.type === kind);
+  const list = current?.list ?? [];
+  const [locationId, setLocationId] = useState("");
+  const isAll = locationId === ALL_LOCATIONS;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -258,13 +266,24 @@ function CreateDialog({ locations, onClose }: { locations: Locations; onClose: (
             label="Label"
             htmlFor="label"
             errors={fieldErrors.label}
-            hint="For example: Bole Branch – main entrance"
+            hint={
+              isAll
+                ? "One QR code for all of them: customers choose their location after scanning."
+                : "For example: Bole Branch – main entrance"
+            }
           >
             <Input id="label" name="label" required maxLength={120} />
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Location type" htmlFor="kind">
-              <NativeSelect id="kind" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
+              <NativeSelect
+                id="kind"
+                value={kind}
+                onChange={(e) => {
+                  setKind(e.target.value as typeof kind);
+                  setLocationId("");
+                }}
+              >
                 {kinds.map((k) => (
                   <option key={k.type} value={k.type}>
                     {k.label}
@@ -273,7 +292,15 @@ function CreateDialog({ locations, onClose }: { locations: Locations; onClose: (
               </NativeSelect>
             </Field>
             <Field label="Location" htmlFor="locationId" errors={fieldErrors.locationId}>
-              <NativeSelect id="locationId" name="locationId" key={kind} required>
+              <NativeSelect
+                id="locationId"
+                name="locationId"
+                key={kind}
+                defaultValue={list[0]?.id}
+                required
+                onChange={(e) => setLocationId(e.target.value)}
+              >
+                {locations.canAll ? <option value={ALL_LOCATIONS}>{current?.all}</option> : null}
                 {list.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
@@ -306,8 +333,7 @@ function EditDialog({ row, onClose }: { row: QrRow; onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>Edit QR code</DialogTitle>
           <DialogDescription>
-            {row.location.type}: {row.location.name}. The location cannot be changed; create a new QR code
-            instead.
+            {locLabel(row.location)}. The location cannot be changed; create a new QR code instead.
           </DialogDescription>
         </DialogHeader>
         <form

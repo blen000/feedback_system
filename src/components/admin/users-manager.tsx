@@ -4,6 +4,7 @@ import { useState } from "react";
 import { PlusIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { ALL_LOCATIONS } from "@/lib/validation/location";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -434,6 +435,7 @@ function UserDialog({
                       value={a.districtId ?? ""}
                       onChange={(e) => patch(i, { districtId: e.target.value })}
                     >
+                      <option value={ALL_LOCATIONS}>All districts</option>
                       {options.districts.map((d) => (
                         <option key={d.id} value={d.id}>
                           {d.name}
@@ -447,6 +449,7 @@ function UserDialog({
                       value={a.branchId ?? ""}
                       onChange={(e) => patch(i, { branchId: e.target.value })}
                     >
+                      <option value={ALL_LOCATIONS}>All branches</option>
                       {options.branches.map((b) => (
                         <option key={b.id} value={b.id}>
                           {b.name}
@@ -460,6 +463,7 @@ function UserDialog({
                       value={a.departmentId ?? ""}
                       onChange={(e) => patch(i, { departmentId: e.target.value })}
                     >
+                      <option value={ALL_LOCATIONS}>All departments</option>
                       {options.departments.map((d) => (
                         <option key={d.id} value={d.id}>
                           {d.name}

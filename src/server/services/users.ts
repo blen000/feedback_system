@@ -10,7 +10,8 @@ import {
   requirePermission,
   type AuthContext,
 } from "@/lib/rbac/authorize";
-import { branchWhere, departmentWhere, districtWhere } from "@/lib/rbac/scope";
+import { branchWhere, departmentWhere, districtWhere, type AccessScope } from "@/lib/rbac/scope";
+import { ALL_LOCATIONS } from "@/lib/validation/location";
 import {
   createUserSchema,
   resetUserPasswordSchema,
@@ -26,7 +27,7 @@ import { sendAdminReset, sendInvite } from "./password-reset";
 /** An administrator-issued temporary password (no-email deployments) stops working after this long. */
 export const TEMP_PASSWORD_HOURS = 24;
 const tempPasswordExpiry = () => new Date(Date.now() + TEMP_PASSWORD_HOURS * 3600_000);
-import { resolveTarget } from "./targets";
+import { expandAllLocations, resolveTarget } from "./targets";
 
 const userInclude = {
   roles: {
@@ -70,21 +71,26 @@ export async function listUsers(ctx: AuthContext) {
   return users;
 }
 
-/**
- * Options for the user form: roles the actor could grant and locations inside their reach.
- * Convenience only — createUser/updateUser re-validate every assignment server-side.
- */
-export async function listAssignmentOptions(ctx: AuthContext) {
+/** Union of the actor's user.create / user.update reach: where they may place users. */
+function assignableScope(ctx: AuthContext): AccessScope {
   const scopes = (["user.create", "user.update"] as const).flatMap((p) =>
     can(ctx, p) ? [requirePermission(ctx, p)] : [],
   );
   if (scopes.length === 0) throw forbidden();
-  const scope = {
+  return {
     all: scopes.some((s) => s.all),
     districtIds: new Set(scopes.flatMap((s) => [...s.districtIds])),
     branchIds: new Set(scopes.flatMap((s) => [...s.branchIds])),
     departmentIds: new Set(scopes.flatMap((s) => [...s.departmentIds])),
   };
+}
+
+/**
+ * Options for the user form: roles the actor could grant and locations inside their reach.
+ * Convenience only — createUser/updateUser re-validate every assignment server-side.
+ */
+export async function listAssignmentOptions(ctx: AuthContext) {
+  const scope = assignableScope(ctx);
 
   const [roles, districts, branches, departments] = await Promise.all([
     prisma.role.findMany({
@@ -130,6 +136,44 @@ async function rolePermissionKeys(roleId: string): Promise<string[]> {
     select: { permission: { select: { key: true } } },
   });
   return rows.map((r) => r.permission.key);
+}
+
+/**
+ * "All districts/branches/departments" becomes one assignment per location. Only locations where the
+ * actor may grant that role are included, so a scoped administrator's "All" stays inside their reach.
+ */
+async function expandAssignments(ctx: AuthContext, list: ScopeInput[]): Promise<ScopeInput[]> {
+  const out: ScopeInput[] = [];
+  for (const a of list) {
+    const field = (
+      { DISTRICT: "districtId", BRANCH: "branchId", DEPARTMENT: "departmentId", ALL: null } as const
+    )[a.scopeType];
+    if (!field || a[field] !== ALL_LOCATIONS) {
+      out.push(a);
+      continue;
+    }
+    const role = await prisma.role.findFirst({ where: { id: a.roleId, deletedAt: null } });
+    if (!role) throw notFound("Role");
+    const permissions = await rolePermissionKeys(role.id);
+    const ids = await expandAllLocations(
+      a.scopeType as "DISTRICT" | "BRANCH" | "DEPARTMENT",
+      assignableScope(ctx),
+    );
+    let granted = 0;
+    for (const id of ids) {
+      const row = { ...a, districtId: null, branchId: null, departmentId: null, [field]: id };
+      if (!actorCoversRole(ctx, permissions, await resolveTarget(row))) continue;
+      out.push(row);
+      granted++;
+    }
+    if (granted === 0) throw forbidden("You cannot assign a role with more access than you hold.");
+  }
+  // "All" next to an explicit entry must not create the same assignment twice
+  const seen = new Set<string>();
+  return out.filter((a) => {
+    const k = [a.roleId, a.scopeType, a.districtId, a.branchId, a.departmentId].join("|");
+    return seen.has(k) ? false : (seen.add(k), true);
+  });
 }
 
 /** Every assignment the actor is about to grant must be within the actor's own reach. */
@@ -178,7 +222,8 @@ export async function createUser(ctx: AuthContext, input: unknown) {
   if (!inviteMode && !data.password) {
     throw invalid("Please correct the highlighted fields.", { password: ["Enter a temporary password."] });
   }
-  await assertCanGrant(ctx, data.assignments);
+  const assignments = await expandAssignments(ctx, data.assignments);
+  await assertCanGrant(ctx, assignments);
   let user;
   try {
     user = await prisma.user.create({
@@ -189,7 +234,7 @@ export async function createUser(ctx: AuthContext, input: unknown) {
         passwordHash: await hashPassword(inviteMode ? generateToken() : data.password!),
         mustChangePassword: true,
         tempPasswordExpiresAt: inviteMode ? null : tempPasswordExpiry(),
-        roles: { create: toRows(data.assignments) },
+        roles: { create: toRows(assignments) },
       },
     });
   } catch (e) {
@@ -202,7 +247,7 @@ export async function createUser(ctx: AuthContext, input: unknown) {
     action: "USER_CREATED",
     resource: "User",
     resourceId: user.id,
-    metadata: { email: user.email, assignments: data.assignments, invited: inviteMode },
+    metadata: { email: user.email, assignments, invited: inviteMode },
   });
   // A failed email must not undo the account: report it so the administrator can resend.
   const emailSent = inviteMode ? await sendInvite(user, ctx.userId) : null;
@@ -228,11 +273,12 @@ export async function updateUser(ctx: AuthContext, id: string, input: unknown) {
     // Editing your own assignments would allow self-escalation or accidental lock-out.
     throw forbidden("You cannot change your own roles.");
   }
-  await assertCanGrant(ctx, data.assignments);
+  const assignments = await expandAssignments(ctx, data.assignments);
+  await assertCanGrant(ctx, assignments);
   await prisma.$transaction([
     prisma.user.update({ where: { id }, data: { name: data.name } }),
     prisma.userRole.deleteMany({ where: { userId: id } }),
-    prisma.userRole.createMany({ data: toRows(data.assignments).map((r) => ({ ...r, userId: id })) }),
+    prisma.userRole.createMany({ data: toRows(assignments).map((r) => ({ ...r, userId: id })) }),
   ]);
   await writeAudit({
     actorId: ctx.userId,
@@ -246,7 +292,7 @@ export async function updateUser(ctx: AuthContext, id: string, input: unknown) {
     action: "USER_ROLES_CHANGED",
     resource: "User",
     resourceId: id,
-    metadata: { assignments: data.assignments },
+    metadata: { assignments },
   });
 }
 

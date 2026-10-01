@@ -1,11 +1,14 @@
 import { z } from "zod";
 import {
   CHOICE_TYPES,
+  DEFAULT_LAYOUT,
   DEFAULT_LOCALE,
+  QUESTIONNAIRE_LAYOUTS,
   QUESTION_TYPES,
   RATING_TYPES,
   SUPPORTED_LOCALES,
 } from "@/lib/questionnaire/types";
+import { locationIdSchema } from "./location";
 
 const uuid = z.string().uuid();
 const localeCodes = SUPPORTED_LOCALES.map((l) => l.code) as [string, ...string[]];
@@ -108,6 +111,7 @@ export const questionnaireMetaSchema = z
     defaultLocale: localeCode.default(DEFAULT_LOCALE),
     locales: z.array(localeCode).min(1).default([DEFAULT_LOCALE]),
     collectContact: z.boolean().default(false),
+    layout: z.enum(QUESTIONNAIRE_LAYOUTS).default(DEFAULT_LAYOUT),
   })
   .superRefine((m, ctx) => {
     if (!m.title[m.defaultLocale]) {
@@ -167,7 +171,7 @@ export const draftSchema = z
 export const assignmentTargetSchema = z
   .object({
     scopeType: z.enum(["ALL", "DISTRICT", "BRANCH", "DEPARTMENT"]),
-    id: uuid.optional(),
+    id: locationIdSchema.optional(),
   })
   .superRefine((t, ctx) => {
     if (t.scopeType === "ALL" && t.id)

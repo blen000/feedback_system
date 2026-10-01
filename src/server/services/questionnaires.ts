@@ -32,10 +32,11 @@ import {
   questionnaireMetaSchema,
   type AssignmentTarget,
 } from "@/lib/validation/questionnaire";
+import { ALL_LOCATIONS } from "@/lib/validation/location";
 import { parse } from "@/lib/validation/parse";
 import { Prisma, type QuestionnaireStatus } from "@/generated/prisma/client";
 import { presentQuestion, type LibraryQuestion } from "./questions";
-import { resolveTarget } from "./targets";
+import { expandAllLocations, resolveTarget } from "./targets";
 
 const questionInclude = {
   translations: true,
@@ -92,6 +93,7 @@ export function buildDefinition(q: Full, version: number): QuestionnaireDefiniti
     defaultLocale: q.defaultLocale,
     locales,
     collectContact: q.collectContact,
+    layout: q.layout,
     title,
     description,
     questions,
@@ -181,6 +183,7 @@ export async function getQuestionnaireEditor(ctx: AuthContext, id: string) {
       defaultLocale: q.defaultLocale,
       locales: q.locales,
       collectContact: q.collectContact,
+      layout: q.layout,
     },
     questions: q.questions.map((i): EditorQuestion => ({
       ref: i.id,
@@ -272,6 +275,7 @@ export async function createQuestionnaire(ctx: AuthContext, input: unknown) {
       defaultLocale: meta.defaultLocale,
       locales: meta.locales,
       collectContact: meta.collectContact,
+      layout: meta.layout,
       createdById: ctx.userId,
       translations: {
         create: Object.entries(meta.title).map(([locale, title]) => ({
@@ -335,7 +339,12 @@ export async function saveDraft(ctx: AuthContext, id: string, input: unknown) {
   await prisma.$transaction(async (tx) => {
     await tx.questionnaire.update({
       where: { id },
-      data: { defaultLocale: meta.defaultLocale, locales: meta.locales, collectContact: meta.collectContact },
+      data: {
+        defaultLocale: meta.defaultLocale,
+        locales: meta.locales,
+        collectContact: meta.collectContact,
+        layout: meta.layout,
+      },
     });
     await tx.questionnaireTranslation.deleteMany({ where: { questionnaireId: id } });
     await tx.questionnaireTranslation.createMany({
@@ -534,7 +543,7 @@ async function requirePermissionOnAssignment(
 
 /** Replaces where this questionnaire is shown. The actor must control every location involved. */
 export async function setAssignments(ctx: AuthContext, id: string, input: unknown) {
-  requirePermission(ctx, "questionnaire.publish");
+  const scope = requirePermission(ctx, "questionnaire.publish");
   const targets: AssignmentTarget[] = parse(assignmentsSchema, input);
   const q = await prisma.questionnaire.findFirst({
     where: { id, deletedAt: null },
@@ -543,14 +552,24 @@ export async function setAssignments(ctx: AuthContext, id: string, input: unknow
   if (!q) throw notFound("Questionnaire");
   if (q.status === "CLOSED") throw conflict("A closed questionnaire cannot be reassigned.");
 
-  const rows = targets.map((t) => ({
+  // "All districts/branches/departments" becomes one assignment per location the actor controls.
+  const hasAll = targets.some((t) => t.id === ALL_LOCATIONS);
+  const expanded: { scopeType: AssignmentTarget["scopeType"]; id?: string }[] = [];
+  for (const t of targets) {
+    if (t.id === ALL_LOCATIONS && t.scopeType !== "ALL") {
+      for (const locId of await expandAllLocations(t.scopeType, scope))
+        expanded.push({ scopeType: t.scopeType, id: locId });
+    } else expanded.push(t);
+  }
+  const all = expanded.map((t) => ({
     questionnaireId: id,
     districtId: t.scopeType === "DISTRICT" ? t.id! : null,
     branchId: t.scopeType === "BRANCH" ? t.id! : null,
     departmentId: t.scopeType === "DEPARTMENT" ? t.id! : null,
   }));
-  const unique = new Set(rows.map((r) => `${r.districtId}|${r.branchId}|${r.departmentId}`));
-  if (unique.size !== rows.length) throw invalid("Each location can only be listed once.");
+  const key = (r: (typeof all)[number]) => `${r.districtId}|${r.branchId}|${r.departmentId}`;
+  const rows = [...new Map(all.map((r) => [key(r), r])).values()];
+  if (!hasAll && rows.length !== all.length) throw invalid("Each location can only be listed once.");
 
   // Locations being added or removed both need authority (you cannot strip another region's questionnaire).
   for (const a of [...q.assignments, ...rows]) await requirePermissionOnAssignment(ctx, a);

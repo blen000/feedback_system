@@ -4,7 +4,7 @@
  */
 import { prisma } from "@/lib/db/prisma";
 import { writeAudit } from "@/lib/audit";
-import { conflict, notFound } from "@/lib/errors";
+import { conflict, forbidden, notFound } from "@/lib/errors";
 import { hit } from "@/lib/rate-limit";
 import { hashIp } from "@/lib/auth/crypto";
 import { requirePermission, requirePermissionOn, type AuthContext } from "@/lib/rbac/authorize";
@@ -12,6 +12,7 @@ import { qrWhere, type Target } from "@/lib/rbac/scope";
 import { generatePublicCode, PUBLIC_CODE_PATTERN, publicUrl, qrSvgDataUri } from "@/lib/qr/generate";
 import { createQrSchema, updateQrSchema } from "@/lib/validation/qr";
 import { parse } from "@/lib/validation/parse";
+import { ALL_LOCATIONS } from "@/lib/validation/location";
 import { pick } from "@/lib/questionnaire/types";
 import { Prisma } from "@/generated/prisma/client";
 import { resolveActiveQuestionnaire } from "./questionnaires";
@@ -44,13 +45,28 @@ const include = {
 type Row = Prisma.QRCodeGetPayload<{ include: typeof include }>;
 
 function targetOf(qr: Row): Target {
+  if (qr.allOf) return { type: "ALL" }; // spans the whole bank, so only bank-wide staff manage it
   if (qr.branch) return { type: "BRANCH", branchId: qr.branch.id, districtId: qr.branch.districtId };
   if (qr.department)
     return { type: "DEPARTMENT", departmentId: qr.department.id, districtId: qr.department.districtId };
   return { type: "DISTRICT", districtId: qr.districtId! };
 }
 
+const ALL_LABEL = {
+  DISTRICT: "All districts",
+  BRANCH: "All branches",
+  DEPARTMENT: "All departments",
+} as const;
+
 function locationOf(qr: Row) {
+  if (qr.allOf && qr.allOf !== "ALL") {
+    return {
+      type: "All" as const,
+      name: ALL_LABEL[qr.allOf],
+      parent: "Feedback is recorded for the entire bank",
+      usable: true,
+    };
+  }
   if (qr.branch) {
     const usable =
       !qr.branch.deletedAt &&
@@ -163,7 +179,8 @@ export async function listQrLocations(ctx: AuthContext) {
       select: { id: true, name: true },
     }),
   ]);
-  return { districts, branches, departments };
+  // A single QR covering every branch/district/department spans the bank: bank-wide staff only.
+  return { districts, branches, departments, canAll: scope.all };
 }
 
 /** For downloads/print: verifies permission and scope, returns only what is needed. */
@@ -182,28 +199,45 @@ export async function getQrForDownload(ctx: AuthContext, id: string) {
 // ───────────────────────── Writes ─────────────────────────
 
 export async function createQRCode(ctx: AuthContext, input: unknown) {
-  requirePermission(ctx, "qr.create");
+  const scope = requirePermission(ctx, "qr.create");
   const data = parse(createQrSchema, input);
-  const target = await resolveTarget({
-    scopeType: data.scopeType,
-    districtId: data.scopeType === "DISTRICT" ? data.locationId : null,
-    branchId: data.scopeType === "BRANCH" ? data.locationId : null,
-    departmentId: data.scopeType === "DEPARTMENT" ? data.locationId : null,
-  });
-  requirePermissionOn(ctx, "qr.create", target);
+  if (data.locationId === ALL_LOCATIONS) {
+    // ONE code for every branch/district/department; the customer picks theirs when scanning.
+    if (!scope.all) throw forbidden();
+    return createOne(ctx, data.label, data.scopeType, null);
+  }
+  return createOne(ctx, data.label, data.scopeType, data.locationId);
+}
 
-  const inactive = await isLocationInactive(data.scopeType, data.locationId);
-  if (inactive) throw conflict("That location is inactive. Activate it before creating a QR code.");
+async function createOne(
+  ctx: AuthContext,
+  label: string,
+  scopeType: "DISTRICT" | "BRANCH" | "DEPARTMENT",
+  locationId: string | null,
+) {
+  if (locationId) {
+    const target = await resolveTarget({
+      scopeType,
+      districtId: scopeType === "DISTRICT" ? locationId : null,
+      branchId: scopeType === "BRANCH" ? locationId : null,
+      departmentId: scopeType === "DEPARTMENT" ? locationId : null,
+    });
+    requirePermissionOn(ctx, "qr.create", target);
+
+    const inactive = await isLocationInactive(scopeType, locationId);
+    if (inactive) throw conflict("That location is inactive. Activate it before creating a QR code.");
+  }
 
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const qr = await prisma.qRCode.create({
         data: {
           publicCode: generatePublicCode(),
-          label: data.label,
-          districtId: data.scopeType === "DISTRICT" ? data.locationId : null,
-          branchId: data.scopeType === "BRANCH" ? data.locationId : null,
-          departmentId: data.scopeType === "DEPARTMENT" ? data.locationId : null,
+          label,
+          districtId: locationId && scopeType === "DISTRICT" ? locationId : null,
+          branchId: locationId && scopeType === "BRANCH" ? locationId : null,
+          departmentId: locationId && scopeType === "DEPARTMENT" ? locationId : null,
+          allOf: locationId ? null : scopeType,
           createdById: ctx.userId,
         },
       });
@@ -212,7 +246,7 @@ export async function createQRCode(ctx: AuthContext, input: unknown) {
         action: "QR_CREATED",
         resource: "QRCode",
         resourceId: qr.id,
-        metadata: { label: data.label, scopeType: data.scopeType, locationId: data.locationId },
+        metadata: { label, scopeType, locationId },
       });
       return { id: qr.id, publicCode: qr.publicCode };
     } catch (e) {
@@ -309,6 +343,23 @@ export async function resolvePublicCode(code: string): Promise<QrResolution> {
   const qr = await prisma.qRCode.findUnique({ where: { publicCode: code }, include });
   if (!qr || qr.deletedAt) return { status: "NOT_FOUND" };
   if (!qr.isActive) return { status: "QR_INACTIVE" };
+
+  if (qr.allOf) {
+    // Shared "All branches/districts/departments" code: straight to the bank-wide questionnaire and the
+    // feedback is recorded for the entire bank (no district/branch/department).
+    const questionnaire = await resolveActiveQuestionnaire({});
+    if (!questionnaire) return { status: "NO_ACTIVE_QUESTIONNAIRE" };
+    return {
+      status: "OK",
+      qrCodeId: qr.id,
+      location: { type: "Bank", name: "Entire bank", parent: null },
+      districtId: null,
+      branchId: null,
+      departmentId: null,
+      questionnaire,
+    };
+  }
+
   const loc = locationOf(qr);
   if (!loc.usable) return { status: "LOCATION_INACTIVE" };
 

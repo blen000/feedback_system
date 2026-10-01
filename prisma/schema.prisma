@@ -38,6 +38,12 @@ enum QuestionType {
   EMOJI_RATING
 }
 
+/// How customers see the questions: all on one scrollable page, or one at a time.
+enum QuestionnaireLayout {
+  SCROLL
+  ONE_AT_A_TIME
+}
+
 enum QuestionnaireStatus {
   DRAFT
   PUBLISHED
@@ -290,6 +296,8 @@ model Questionnaire {
   locales        String[]            @default(["en"])
   /// Ask "may we contact you?" and (optionally) a phone number.
   collectContact Boolean             @default(false)
+  /// Customer-facing layout; one question at a time unless the admin chooses otherwise.
+  layout         QuestionnaireLayout @default(ONE_AT_A_TIME)
   /// Version number of the latest published snapshot (0 = never published).
   latestVersion  Int                 @default(0)
   createdById    String?             @db.Uuid
@@ -379,8 +387,9 @@ model QuestionnaireAssignment {
 
 // ───────────────────────────── QR codes ─────────────────────────────
 
-/// Points at a location, not a questionnaire. Exactly one of district/branch/department
-/// is set (CHECK constraint added in migration SQL).
+/// Points at a location, not a questionnaire. Either exactly one of district/branch/department
+/// is set, or none is and `allOf` names the kind it covers (ONE code shared by every branch,
+/// district or department; the customer picks theirs after scanning). CHECK constraint in migration SQL.
 model QRCode {
   id           String    @id @default(uuid(7)) @db.Uuid
   /// Random, non-sequential public identifier used in /f/[publicCode].
@@ -389,6 +398,8 @@ model QRCode {
   districtId   String?   @db.Uuid
   branchId     String?   @db.Uuid
   departmentId String?   @db.Uuid
+  /// DISTRICT | BRANCH | DEPARTMENT: this single QR serves every location of that kind.
+  allOf        ScopeType?
   isActive     Boolean   @default(true)
   createdById  String?   @db.Uuid
   createdAt    DateTime  @default(now())

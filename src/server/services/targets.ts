@@ -1,6 +1,13 @@
 import { prisma } from "@/lib/db/prisma";
-import { notFound } from "@/lib/errors";
-import type { ScopeType, Target } from "@/lib/rbac/scope";
+import { invalid, notFound } from "@/lib/errors";
+import {
+  branchWhere,
+  departmentWhere,
+  districtWhere,
+  type AccessScope,
+  type ScopeType,
+  type Target,
+} from "@/lib/rbac/scope";
 
 export interface TargetRef {
   scopeType: ScopeType;
@@ -30,4 +37,35 @@ export async function resolveTarget(a: TargetRef): Promise<Target> {
       return { type: "DEPARTMENT", departmentId: d.id, districtId: d.districtId };
     }
   }
+}
+
+export type LocationKind = "DISTRICT" | "BRANCH" | "DEPARTMENT";
+
+/**
+ * Every live location of `kind` inside `scope` — what "All districts/branches/departments" means
+ * for that actor. Bank-wide actors get every one; scoped actors only their own reach.
+ */
+export async function expandAllLocations(
+  kind: LocationKind,
+  scope: AccessScope,
+  opts: { activeOnly?: boolean } = {},
+): Promise<string[]> {
+  const base = { deletedAt: null, ...(opts.activeOnly ? { isActive: true } : {}) };
+  const select = { id: true } as const;
+  const orderBy = { name: "asc" } as const;
+  const rows =
+    kind === "DISTRICT"
+      ? await prisma.district.findMany({ where: { ...base, ...districtWhere(scope) }, select, orderBy })
+      : kind === "BRANCH"
+        ? await prisma.branch.findMany({ where: { ...base, ...branchWhere(scope) }, select, orderBy })
+        : await prisma.department.findMany({
+            where: { ...base, ...departmentWhere(scope) },
+            select,
+            orderBy,
+          });
+  if (rows.length === 0) {
+    const noun = { DISTRICT: "districts", BRANCH: "branches", DEPARTMENT: "departments" }[kind];
+    throw invalid(`There are no ${noun} available to apply this to.`);
+  }
+  return rows.map((r) => r.id);
 }

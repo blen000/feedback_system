@@ -10,11 +10,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FormError } from "@/components/admin/form-bits";
+import { LayoutField } from "./layout-field";
 import { EmptyState } from "@/components/admin/page-header";
 import { useAction } from "@/components/admin/use-action";
 import { LocalizedInput } from "./localized-input";
 import { createQuestionnaireAction } from "@/server/actions/questionnaires";
-import { SUPPORTED_LOCALES, type Localized } from "@/lib/questionnaire/types";
+import {
+  DEFAULT_LAYOUT,
+  SUPPORTED_LOCALES,
+  type Localized,
+  type QuestionnaireLayout,
+} from "@/lib/questionnaire/types";
 
 export interface QuestionnaireListRow {
   id: string;
@@ -114,6 +120,7 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState<Localized>({});
   const [locales, setLocales] = useState<string[]>(["en"]);
   const [collectContact, setCollectContact] = useState(false);
+  const [layout, setLayout] = useState<QuestionnaireLayout>(DEFAULT_LAYOUT);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -133,6 +140,7 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
                   defaultLocale: "en",
                   locales,
                   collectContact,
+                  layout,
                 }),
               (data) => {
                 onClose();
@@ -190,6 +198,7 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
               </span>
             </span>
           </label>
+          <LayoutField value={layout} onChange={setLayout} />
           <FormError message={Object.keys(fieldErrors).length ? null : error} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
