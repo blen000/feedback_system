@@ -11,6 +11,8 @@ const schema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().min(3).optional(),
+  /** Comma-separated addresses that receive high-severity security alerts. Default: all active SUPER_ADMIN users. */
+  SECURITY_ALERT_EMAILS: z.string().optional(),
   /** Accept a self-signed / private-CA certificate from the mail server. Weakens TLS: use only on a trusted network. */
   SMTP_ALLOW_SELF_SIGNED: z.enum(["true", "false"]).default("false"),
   /** "console" logs emails instead of sending (local trials); default is smtp when configured. */

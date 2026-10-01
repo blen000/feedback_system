@@ -9,6 +9,7 @@ import { AppError, invalid } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { validateSubmission } from "@/lib/questionnaire/engine";
 import { pick } from "@/lib/questionnaire/types";
+import { normalizePhone, PHONE_MESSAGE } from "@/lib/validation/phone";
 import { Prisma } from "@/generated/prisma/client";
 import { notifyCovering } from "./notifications";
 import { resolvePublicCode, type QrResolution } from "./qr";
@@ -22,7 +23,6 @@ export function messageFor(status: Exclude<QrResolution["status"], "OK">): strin
   return status === "NO_ACTIVE_QUESTIONNAIRE" ? CLOSED_MESSAGE : UNAVAILABLE_MESSAGE;
 }
 
-const PHONE = /^\+?[0-9 ()-]{7,20}$/;
 /** Overall ratings at or below this raise an in-app alert for staff covering the location. */
 export const LOW_RATING_THRESHOLD = 2;
 
@@ -68,9 +68,8 @@ export async function submitFeedback(publicCode: string, input: unknown, meta: S
   let wantsFollowUp = false;
   let contactPhone: string | null = null;
   if (definition.collectContact && body.data.wantsFollowUp) {
-    const phone = (body.data.contactPhone ?? "").trim();
-    if (!PHONE.test(phone))
-      throw invalid("Please check your answers and try again.", { _phone: ["Enter a valid phone number."] });
+    const phone = normalizePhone(body.data.contactPhone ?? "");
+    if (!phone) throw invalid("Please check your answers and try again.", { _phone: [PHONE_MESSAGE] });
     wantsFollowUp = true;
     contactPhone = phone;
   }

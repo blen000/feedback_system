@@ -5,17 +5,19 @@
 import { prisma } from "@/lib/db/prisma";
 import { writeAudit } from "@/lib/audit";
 import { DUMMY_HASH, generateToken, hashIp, hashPassword, hmac, verifyPassword } from "@/lib/auth/crypto";
-import { AppError, invalid } from "@/lib/errors";
+import { AppError, invalid, loginLocked } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { clearLoginThrottle, recordFailure, reserveAttempt } from "./login-throttle";
 import { changePasswordSchema, loginSchema } from "@/lib/validation/auth";
 import type { AuthContext } from "@/lib/rbac/authorize";
+import { effectiveAssignmentPermissions } from "@/lib/rbac/permissions";
 import type { Assignment } from "@/lib/rbac/scope";
 
 export const SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1000; // hard cap per login
 export const SESSION_IDLE_MS = 30 * 60 * 1000; // sign out after inactivity
 const TOUCH_INTERVAL_MS = 60 * 1000;
-const MAX_FAILED_LOGINS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
+/** Newest sessions kept per user; signing in on a further device ends the oldest one. */
+export const MAX_ACTIVE_SESSIONS = 3;
 
 const INVALID_CREDENTIALS = "Invalid email or password.";
 
@@ -35,10 +37,21 @@ export async function login(input: unknown, meta: RequestMeta = {}): Promise<Log
   if (!parsed.success) throw new AppError(INVALID_CREDENTIALS, "UNAUTHENTICATED");
   const { email, password } = parsed.data;
 
-  // Throttle by source and by target account, before touching credentials.
-  const ipKey = hashIp(meta.ip) ?? "unknown";
-  await enforceRateLimit(`login:ip:${ipKey}`, 30, 15 * 60);
-  await enforceRateLimit(`login:email:${hmac(email).slice(0, 24)}`, 10, 15 * 60);
+  // Broad per-source flood limit, before touching credentials.
+  await enforceRateLimit(`login:ip:${hashIp(meta.ip) ?? "unknown"}`, 30, 15 * 60);
+
+  // Per-account limit: MAX_LOGIN_ATTEMPTS attempts, then a LOCKOUT_SECONDS lock during which NO attempt
+  // is evaluated (the password is not even checked). Reserved atomically before verification.
+  const reservation = await reserveAttempt(email);
+  if (!reservation.allowed) {
+    await writeAudit({
+      action: "LOGIN_FAILED",
+      resource: "User",
+      metadata: { reason: "locked" },
+      ip: meta.ip,
+    });
+    throw loginLocked(reservation.retryAfterSeconds);
+  }
 
   const user = await prisma.user.findUnique({ where: { email } });
   // Always run one bcrypt comparison so response time does not reveal whether the account exists.
@@ -46,17 +59,20 @@ export async function login(input: unknown, meta: RequestMeta = {}): Promise<Log
 
   const now = new Date();
   const usable = user && user.status === "ACTIVE" && !user.deletedAt;
-  const locked = user?.lockedUntil && user.lockedUntil > now;
+  // An administrator-issued temporary password is only good for a limited time.
+  const tempExpired =
+    !!user?.mustChangePassword && !!user.tempPasswordExpiresAt && user.tempPasswordExpiresAt <= now;
 
-  if (!user || !usable || locked || !passwordOk) {
-    if (user && usable && !locked && !passwordOk) {
-      const failed = user.failedLoginCount + 1;
-      await prisma.user.update({
-        where: { id: user.id },
-        data:
-          failed >= MAX_FAILED_LOGINS
-            ? { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + LOCKOUT_MS) }
-            : { failedLoginCount: failed },
+  if (!user || !usable || tempExpired || !passwordOk) {
+    const lockSeconds = await recordFailure(email, reservation.attempt);
+    if (lockSeconds && user) {
+      await writeAudit({
+        actorId: user.id,
+        action: "ACCOUNT_LOCKED",
+        resource: "User",
+        resourceId: user.id,
+        metadata: { seconds: lockSeconds },
+        ip: meta.ip,
       });
     }
     await writeAudit({
@@ -65,18 +81,25 @@ export async function login(input: unknown, meta: RequestMeta = {}): Promise<Log
       resource: "User",
       resourceId: user?.id ?? null,
       metadata: {
-        reason: !user ? "unknown_user" : !usable ? "inactive" : locked ? "locked" : "bad_password",
+        reason: !user
+          ? "unknown_user"
+          : !usable
+            ? "inactive"
+            : tempExpired && passwordOk
+              ? "temporary_password_expired"
+              : "bad_password",
+        attempt: reservation.attempt,
       },
       ip: meta.ip,
     });
     // Same message for every failure mode: no account enumeration.
+    if (lockSeconds) throw loginLocked(lockSeconds);
     throw new AppError(INVALID_CREDENTIALS, "UNAUTHENTICATED");
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now },
-  });
+  await clearLoginThrottle(email);
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
+  await enforceSessionCap(user.id, now);
 
   const token = generateToken();
   const expiresAt = new Date(now.getTime() + SESSION_ABSOLUTE_MS);
@@ -125,16 +148,19 @@ export async function authenticateToken(token: string | undefined | null): Promi
     await prisma.session.update({ where: { id: session.id }, data: { lastUsedAt: now } });
   }
 
-  const assignments: Assignment[] = user.roles
-    .filter((ur) => !ur.role.deletedAt)
-    .map((ur) => ({
-      roleKey: ur.role.key,
-      scopeType: ur.scopeType,
-      districtId: ur.districtId,
-      branchId: ur.branchId,
-      departmentId: ur.departmentId,
-      permissions: new Set(ur.role.permissions.map((rp) => rp.permission.key)),
-    }));
+  const liveRoles = user.roles.filter((ur) => !ur.role.deletedAt);
+  // a permission whose prerequisite the user does not hold anywhere grants nothing (see PERMISSION_REQUIRES)
+  const effective = effectiveAssignmentPermissions(
+    liveRoles.map((ur) => ur.role.permissions.map((rp) => rp.permission.key)),
+  );
+  const assignments: Assignment[] = liveRoles.map((ur, i) => ({
+    roleKey: ur.role.key,
+    scopeType: ur.scopeType,
+    districtId: ur.districtId,
+    branchId: ur.branchId,
+    departmentId: ur.departmentId,
+    permissions: effective[i],
+  }));
 
   return {
     userId: user.id,
@@ -158,6 +184,46 @@ export async function logout(token: string | undefined | null, meta: RequestMeta
     resourceId: session.userId,
     ip: meta.ip,
   });
+}
+
+/** Keeps at most MAX_ACTIVE_SESSIONS - 1 existing live sessions so the one being created is the newest. */
+async function enforceSessionCap(userId: string, now: Date): Promise<void> {
+  const live = await prisma.session.findMany({
+    where: { userId, revokedAt: null, expiresAt: { gt: now } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  const excess = live.slice(MAX_ACTIVE_SESSIONS - 1);
+  if (excess.length)
+    await prisma.session.updateMany({
+      where: { id: { in: excess.map((s) => s.id) } },
+      data: { revokedAt: now },
+    });
+}
+
+/**
+ * Step-up check for sensitive operations: the signed-in actor must re-enter their own password.
+ * Throttled, and failures are audited at high severity (a hijacked session trying to pivot).
+ */
+export async function requireReauthentication(
+  ctx: AuthContext,
+  password: unknown,
+  meta: RequestMeta = {},
+): Promise<void> {
+  await enforceRateLimit(`reauth:${ctx.userId}`, 5, 15 * 60);
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: ctx.userId } });
+  if (typeof password !== "string" || !password || !(await verifyPassword(password, user.passwordHash))) {
+    await writeAudit({
+      actorId: ctx.userId,
+      action: "REAUTH_FAILED",
+      resource: "User",
+      resourceId: ctx.userId,
+      ip: meta.ip,
+    });
+    throw invalid("Please correct the highlighted fields.", {
+      currentPassword: ["Your password is incorrect."],
+    });
+  }
 }
 
 export async function revokeAllSessions(userId: string, exceptSessionId?: string): Promise<void> {
@@ -191,7 +257,11 @@ export async function changeOwnPassword(
   }
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash: await hashPassword(newPassword), mustChangePassword: false },
+    data: {
+      passwordHash: await hashPassword(newPassword),
+      mustChangePassword: false,
+      tempPasswordExpiresAt: null,
+    },
   });
   await revokeAllSessions(user.id, ctx.sessionId);
   await writeAudit({

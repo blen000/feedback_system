@@ -29,7 +29,9 @@ export function ChangePasswordForm() {
           className={authInput}
         />
       </AuthField>
-      <p className="-mt-3 text-xs text-muted-foreground">At least 10 characters, with letters and numbers.</p>
+      <p className="-mt-3 text-xs text-muted-foreground">
+        At least 10 characters with upper- and lower-case letters, a number and a special character.
+      </p>
       <AuthField label="Confirm new password" htmlFor="confirmPassword" errors={fe.confirmPassword}>
         <input
           id="confirmPassword"

@@ -75,6 +75,11 @@ export const createUserSchema = z.object({
   assignments: roleAssignmentsSchema,
 });
 
+/** Step-up: the acting administrator confirms with their own password. */
+export const resetUserPasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Enter your password.").max(128),
+});
+
 export const updateUserSchema = z.object({
   name,
   assignments: roleAssignmentsSchema,

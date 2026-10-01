@@ -4,9 +4,10 @@ import { KpiRow, OverviewCharts } from "@/components/charts/overview-charts";
 import { ChartCard, VerticalBars } from "@/components/charts/charts";
 import { FilterBar, filtersToQuery } from "@/components/feedback/filter-bar";
 import { PrintButton } from "@/components/qr/print-button";
-import { AccessDenied, EmptyState, PageHeader } from "@/components/admin/page-header";
+import { EmptyState, PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
-import { pageAccess } from "@/lib/auth/session";
+import { logAuthorizationDenied, pageAccess } from "@/lib/auth/session";
+import { forbidden } from "next/navigation";
 import { can } from "@/lib/rbac/authorize";
 import { parseFilters } from "@/lib/validation/feedback";
 import { getOverview, getQuestionReport, withDefaultRange } from "@/server/services/analytics";
@@ -15,8 +16,11 @@ import { feedbackFilterOptions } from "@/server/services/feedback-admin";
 export const metadata: Metadata = { title: "Reports" };
 
 export default async function ReportsPage({ searchParams }: PageProps<"/admin/reports">) {
-  const { ctx, allowed } = await pageAccess("reports.view");
-  if (!allowed || !can(ctx, "feedback.view")) return <AccessDenied />;
+  const { ctx } = await pageAccess("reports.view");
+  if (!can(ctx, "feedback.view")) {
+    await logAuthorizationDenied("page", "missing feedback.view");
+    forbidden();
+  }
 
   const filters = parseFilters(await searchParams);
   const ranged = withDefaultRange(filters);

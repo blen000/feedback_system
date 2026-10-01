@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { forbidden, notFound } from "next/navigation";
 import { PrintButton } from "@/components/qr/print-button";
-import { AccessDenied } from "@/components/admin/page-header";
-import { requireAuth } from "@/lib/auth/session";
+import { logAuthorizationDenied, requireAuth } from "@/lib/auth/session";
 import { AppError } from "@/lib/errors";
 import { can } from "@/lib/rbac/authorize";
 import { qrSvg } from "@/lib/qr/generate";
@@ -14,13 +13,19 @@ export const metadata: Metadata = { title: "Print QR code" };
 export default async function PrintQrPage({ params }: PageProps<"/admin/qr-print/[id]">) {
   const { id } = await params;
   const ctx = await requireAuth();
-  if (ctx.mustChangePassword || !can(ctx, "qr.view")) return <AccessDenied />;
+  if (ctx.mustChangePassword || !can(ctx, "qr.view")) {
+    await logAuthorizationDenied("page", "missing qr.view");
+    forbidden();
+  }
 
   let qr;
   try {
     qr = await getQrForDownload(ctx, id);
   } catch (e) {
-    if (e instanceof AppError && e.code === "FORBIDDEN") return <AccessDenied />;
+    if (e instanceof AppError && e.code === "FORBIDDEN") {
+      await logAuthorizationDenied("page", e.message);
+      forbidden();
+    }
     if (e instanceof AppError && e.code === "NOT_FOUND") notFound();
     throw e;
   }

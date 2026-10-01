@@ -29,12 +29,22 @@ export function hashIp(ip: string | null | undefined): string | null {
   return ip ? hmac(`ip:${ip}`).slice(0, 32) : null;
 }
 
-const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const LOWER = "abcdefghijkmnopqrstuvwxyz";
+const DIGITS = "23456789";
+const SPECIAL = "!@#$%^&*-_+=?";
 
-/** Random temporary password (shown once to the administrator). */
+const pick = (set: string) => set[randomInt(set.length)];
+
+/** Random temporary password that always satisfies the password policy (upper, lower, digit, special). */
 export function generateTemporaryPassword(length = 16): string {
-  let out = "";
-  for (let i = 0; i < length; i++) out += PASSWORD_ALPHABET[randomInt(PASSWORD_ALPHABET.length)];
-  // guarantee letter+digit so it satisfies the password policy
-  return `${out.slice(0, length - 2)}${randomInt(2, 10)}${randomInt(2, 10)}`;
+  const all = UPPER + LOWER + DIGITS + SPECIAL;
+  const chars = [pick(UPPER), pick(LOWER), pick(DIGITS), pick(SPECIAL)];
+  while (chars.length < length) chars.push(pick(all));
+  // Fisher–Yates with a CSPRNG so the guaranteed characters are not always at the front
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
 }

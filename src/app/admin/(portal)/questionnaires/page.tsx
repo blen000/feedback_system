@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { QuestionnairesList } from "@/components/questionnaire/questionnaires-list";
 import { pageAccess } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
@@ -8,8 +8,7 @@ import { listQuestionnaires } from "@/server/services/questionnaires";
 export const metadata: Metadata = { title: "Questionnaires" };
 
 export default async function QuestionnairesPage() {
-  const { ctx, allowed } = await pageAccess("questionnaire.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("questionnaire.view");
   const rows = await listQuestionnaires(ctx);
   return (
     <>

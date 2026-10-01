@@ -3,10 +3,12 @@
 import { redirect } from "next/navigation";
 import { AppError } from "@/lib/errors";
 import {
+  clearLoginLockCookie,
   clearSessionCookie,
   getAuthContext,
   readSessionToken,
   requestMeta,
+  setLoginLockCookie,
   setSessionCookie,
 } from "@/lib/auth/session";
 import { changeOwnPassword, login, logout } from "@/server/services/auth";
@@ -15,7 +17,7 @@ import type { ActionResult } from "./helpers";
 
 /** Only same-site relative paths under /admin are honored, preventing open redirects. */
 function safeNext(next: unknown): string {
-  return typeof next === "string" && /^\/admin(\/[\w\-./]*)?$/.test(next) ? next : "/admin/dashboard";
+  return typeof next === "string" && /^\/admin(\/[\w\-./]*)?$/.test(next) ? next : "/admin";
 }
 
 export async function loginAction(
@@ -29,9 +31,13 @@ export async function loginAction(
       await requestMeta(),
     );
     await setSessionCookie(result.token, result.expiresAt, formData.get("remember") === "on");
+    await clearLoginLockCookie();
     target = result.mustChangePassword ? "/admin/change-password" : safeNext(formData.get("next"));
   } catch (e) {
-    if (e instanceof AppError) return { ok: false, error: e.message };
+    if (e instanceof AppError) {
+      if (e.retryAfterSeconds) await setLoginLockCookie(e.retryAfterSeconds);
+      return { ok: false, error: e.message, retryAfter: e.retryAfterSeconds };
+    }
     console.error("Login failed unexpectedly", e);
     return { ok: false, error: "Something went wrong. Please try again." };
   }
@@ -65,7 +71,7 @@ export async function changePasswordAction(
     console.error("Password change failed unexpectedly", e);
     return { ok: false, error: "Something went wrong. Please try again." };
   }
-  redirect("/admin/dashboard");
+  redirect("/admin");
 }
 
 /**

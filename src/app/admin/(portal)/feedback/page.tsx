@@ -3,7 +3,7 @@ import Link from "next/link";
 import { DownloadIcon } from "lucide-react";
 import { FilterBar, filtersToQuery } from "@/components/feedback/filter-bar";
 import { SentimentBadge, Stars } from "@/components/feedback/rating";
-import { AccessDenied, EmptyState, PageHeader } from "@/components/admin/page-header";
+import { EmptyState, PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -15,8 +15,7 @@ import { answerFilterOptions, feedbackFilterOptions, listFeedback } from "@/serv
 export const metadata: Metadata = { title: "Feedback" };
 
 export default async function FeedbackPage({ searchParams }: PageProps<"/admin/feedback">) {
-  const { ctx, allowed } = await pageAccess("feedback.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("feedback.view");
 
   const filters = parseFilters(await searchParams);
   const [options, result, answerQuestions] = await Promise.all([

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthContext } from "@/lib/auth/session";
+import { getAuthContext, logAuthorizationDenied } from "@/lib/auth/session";
 import { AppError } from "@/lib/errors";
 import type { AuthContext } from "@/lib/rbac/authorize";
 import { toCsv, toXlsx, type Table } from "./tabular";
@@ -52,8 +52,10 @@ export async function exportResponse(
       headers: { ...headers, "Content-Type": "text/csv; charset=utf-8" },
     });
   } catch (e) {
-    if (e instanceof AppError)
+    if (e instanceof AppError) {
+      if (e.code === "FORBIDDEN") await logAuthorizationDenied("export", e.message);
       return NextResponse.json({ error: e.message }, { status: STATUS[e.code] ?? 400 });
+    }
     console.error("Export failed", e);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }

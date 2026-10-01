@@ -202,8 +202,31 @@ describe("contact details (opt-in only)", () => {
     const sub = await prisma.feedbackSubmission.findFirstOrThrow({
       where: { contactPhone: { not: null }, questionnaireId: qn.id },
     });
-    expect(sub.contactPhone).toBe("+251 911 234567");
+    expect(sub.contactPhone).toBe("+251911234567"); // stored normalized
     expect(sub.wantsFollowUp).toBe(true);
+  });
+
+  it("only accepts plausible phone numbers", async () => {
+    const { normalizePhone } = await import("@/lib/validation/phone");
+    expect(normalizePhone("0911 234 567")).toBe("0911234567");
+    expect(normalizePhone("+251 (911) 234-567")).toBe("+251911234567");
+    for (const bad of [
+      "091110",
+      "091234533333333333",
+      "+2519112345678901",
+      "0000000000",
+      "0911111111",
+      "+0911234567",
+      "09112345a7",
+      "call me",
+      "",
+      "++251911234567",
+      "+251911234567; DROP",
+    ])
+      expect(normalizePhone(bad), bad).toBeNull();
+    await expect(submit(base(), { wantsFollowUp: true, contactPhone: "091110" })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
   });
 
   it("rejects an invalid phone, and ignores a phone sent without opting in", async () => {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthContext } from "@/lib/auth/session";
+import { getAuthContext, logAuthorizationDenied } from "@/lib/auth/session";
 import { AppError } from "@/lib/errors";
 import { qrPng, qrSvg } from "@/lib/qr/generate";
 import { getQrForDownload } from "@/server/services/qr";
@@ -40,8 +40,10 @@ export async function GET(request: Request, ctx: RouteContext<"/admin/qr-codes/[
       headers: { ...headers, "Content-Type": "image/png" },
     });
   } catch (e) {
-    if (e instanceof AppError)
+    if (e instanceof AppError) {
+      if (e.code === "FORBIDDEN") await logAuthorizationDenied("qr download", e.message);
       return NextResponse.json({ error: e.message }, { status: STATUS[e.code] ?? 400 });
+    }
     console.error("QR download failed", e);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }

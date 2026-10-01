@@ -71,7 +71,11 @@ export function UsersManager({
   emailEnabled: boolean;
 }) {
   const [editing, setEditing] = useState<UserRow | "new" | null>(null);
-  const [tempPassword, setTempPassword] = useState<{ email: string; password: string } | null>(null);
+  const [tempPassword, setTempPassword] = useState<{
+    email: string;
+    password: string;
+    hours: number | null;
+  } | null>(null);
   const reset = useAction();
 
   return (
@@ -138,18 +142,12 @@ export function UsersManager({
                       />
                     ) : null}
                     {canUpdate && !u.isSelf ? (
-                      <ConfirmButton
-                        label="Reset password"
-                        variant="outline"
-                        title={`Reset password for ${u.name}?`}
-                        description="A one-time temporary password will be generated, all of their sessions will end, and they must choose a new password at next sign-in."
-                        confirmLabel="Reset password"
-                        action={async () => {
-                          const res = await resetPasswordAction(u.id);
-                          if (res.ok && res.data)
-                            setTempPassword({ email: u.email, password: res.data.temporaryPassword });
-                          return res;
-                        }}
+                      <ResetPasswordButton
+                        user={u}
+                        emailEnabled={emailEnabled}
+                        onTemporaryPassword={(password, hours) =>
+                          setTempPassword({ email: u.email, password, hours })
+                        }
                       />
                     ) : null}
                     {canDeactivate && !u.isSelf ? (
@@ -195,8 +193,9 @@ export function UsersManager({
           <DialogHeader>
             <DialogTitle>Temporary password</DialogTitle>
             <DialogDescription>
-              Give this to {tempPassword?.email} through a secure channel. It is shown only once and must be
-              changed at first sign-in.
+              Give this to {tempPassword?.email} through a secure channel. It is shown only once, must be
+              changed at first sign-in
+              {tempPassword?.hours ? ` and stops working after ${tempPassword.hours} hours` : ""}.
             </DialogDescription>
           </DialogHeader>
           <code className="select-all rounded-md bg-muted px-3 py-2 text-center font-mono text-lg">
@@ -208,6 +207,81 @@ export function UsersManager({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Password reset is sensitive: the administrator re-enters their own password to confirm it. */
+function ResetPasswordButton({
+  user,
+  emailEnabled,
+  onTemporaryPassword,
+}: {
+  user: UserRow;
+  emailEnabled: boolean;
+  onTemporaryPassword: (password: string, hours: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { run, pending, error, fieldErrors, reset } = useAction();
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Reset password
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) reset();
+        }}
+      >
+        <DialogContent>
+          <form
+            className="grid gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const currentPassword = String(new FormData(e.currentTarget).get("currentPassword") ?? "");
+              run(
+                () => resetPasswordAction(user.id, { currentPassword }),
+                (data) => {
+                  setOpen(false);
+                  if (data?.temporaryPassword)
+                    onTemporaryPassword(data.temporaryPassword, data.validForHours);
+                  else toast.success(`A password reset link was emailed to ${user.email}.`);
+                },
+              );
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Reset password for {user.name}?</DialogTitle>
+              <DialogDescription>
+                {emailEnabled
+                  ? "Their current password stops working, all of their sessions end, and they receive an email with a one-time link to choose a new one."
+                  : "A temporary password will be generated, valid for a limited time. All of their sessions end and they must choose a new password at next sign-in."}{" "}
+                Confirm with your own password. Security contacts are notified of this action.
+              </DialogDescription>
+            </DialogHeader>
+            <Field label="Your password" htmlFor="currentPassword" errors={fieldErrors.currentPassword}>
+              <Input
+                id="currentPassword"
+                name="currentPassword"
+                type="password"
+                required
+                autoComplete="current-password"
+              />
+            </Field>
+            {error && !fieldErrors.currentPassword ? <FormError message={error} /> : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pending}>
+                {pending ? "Working…" : "Reset password"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -322,7 +396,7 @@ function UserDialog({
               label="Temporary password"
               htmlFor="password"
               errors={fieldErrors.password}
-              hint="At least 10 characters with letters and numbers. The user must change it at first sign-in."
+              hint="At least 10 characters with upper- and lower-case letters, a number and a special character. The user must change it at first sign-in."
             >
               <Input id="password" name="password" type="text" required autoComplete="off" />
             </Field>

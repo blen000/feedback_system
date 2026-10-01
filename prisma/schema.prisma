@@ -52,6 +52,13 @@ enum Sentiment {
   NEGATIVE
 }
 
+enum AuditSeverity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
+}
+
 enum NotificationChannel {
   IN_APP
   EMAIL
@@ -61,18 +68,18 @@ enum NotificationChannel {
 // ───────────────────── Identity, roles, permissions ─────────────────────
 
 model User {
-  id                 String     @id @default(uuid(7)) @db.Uuid
-  email              String     @unique // stored lower-case
-  name               String
-  passwordHash       String
-  status             UserStatus @default(ACTIVE)
-  mustChangePassword Boolean    @default(false)
-  failedLoginCount   Int        @default(0)
-  lockedUntil        DateTime?
-  lastLoginAt        DateTime?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
-  deletedAt          DateTime?
+  id                    String     @id @default(uuid(7)) @db.Uuid
+  email                 String     @unique // stored lower-case
+  name                  String
+  passwordHash          String
+  status                UserStatus @default(ACTIVE)
+  mustChangePassword    Boolean    @default(false)
+  /// An administrator-issued temporary password stops working after this moment.
+  tempPasswordExpiresAt DateTime?
+  lastLoginAt           DateTime?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  deletedAt             DateTime?
 
   roles            UserRole[]
   sessions         Session[]
@@ -506,20 +513,32 @@ model Notification {
 // ───────────────────────────── Audit & abuse control ─────────────────────────────
 
 model AuditLog {
-  id         String   @id @default(uuid(7)) @db.Uuid
-  actorId    String?  @db.Uuid
+  id         String        @id @default(uuid(7)) @db.Uuid
+  actorId    String?       @db.Uuid
   action     String // e.g. USER_CREATED
   resource   String // e.g. User
   resourceId String?
   metadata   Json?
   ipHash     String?
-  createdAt  DateTime @default(now())
+  /// Client address as reported by the reverse proxy (needed to investigate incidents).
+  ip         String?
+  severity   AuditSeverity @default(INFO)
+  createdAt  DateTime      @default(now())
 
   actor User? @relation(fields: [actorId], references: [id])
 
   @@index([createdAt])
   @@index([actorId, createdAt])
   @@index([resource, resourceId])
+  @@index([severity, createdAt])
+}
+
+/// Failed-login counter per (hashed) email address; see services/login-throttle.ts.
+model LoginThrottle {
+  key         String    @id
+  attempts    Int       @default(0)
+  lockedUntil DateTime?
+  updatedAt   DateTime  @default(now())
 }
 
 /// Postgres-backed fixed-window rate limiter (no Redis needed for the MVP).

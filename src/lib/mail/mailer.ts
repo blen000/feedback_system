@@ -23,7 +23,8 @@ export const outbox: Mail[] = [];
 export function mailDriver(): Driver {
   const e = env();
   if (e.NODE_ENV === "test") return "capture";
-  if (e.MAIL_DRIVER === "console") return "console";
+  // the console driver prints one-time links into the log: it must never run in production
+  if (e.MAIL_DRIVER === "console" && e.NODE_ENV !== "production") return "console";
   return e.SMTP_HOST && e.SMTP_FROM ? "smtp" : "off";
 }
 

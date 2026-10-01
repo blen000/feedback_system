@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { QuestionnaireBuilder } from "@/components/questionnaire/builder";
 import { pageAccess } from "@/lib/auth/session";
 import { AppError } from "@/lib/errors";
@@ -13,8 +13,7 @@ export const metadata: Metadata = { title: "Questionnaire" };
 
 export default async function QuestionnaireBuilderPage({ params }: PageProps<"/admin/questionnaires/[id]">) {
   const { id } = await params;
-  const { ctx, allowed } = await pageAccess("questionnaire.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("questionnaire.view");
 
   let editor;
   try {

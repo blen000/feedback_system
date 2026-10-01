@@ -20,18 +20,54 @@ const csp = [
   "frame-ancestors 'none'",
 ].join("; ");
 
+/** Every powerful browser feature the app does not use is switched off for this page and any frame in it. */
+const permissionsPolicy = [
+  "accelerometer",
+  "autoplay",
+  "bluetooth",
+  "browsing-topics",
+  "camera",
+  "clipboard-read",
+  "display-capture",
+  "geolocation",
+  "gyroscope",
+  "hid",
+  "idle-detection",
+  "interest-cohort",
+  "magnetometer",
+  "microphone",
+  "midi",
+  "payment",
+  "picture-in-picture",
+  "publickey-credentials-get",
+  "screen-wake-lock",
+  "serial",
+  "usb",
+  "xr-spatial-tracking",
+]
+  .map((f) => `${f}=()`)
+  .concat("fullscreen=(self)")
+  .join(", ");
+
 const securityHeaders = [
   { key: "Content-Security-Policy", value: csp },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  { key: "Permissions-Policy", value: permissionsPolicy },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+  { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
 ];
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  experimental: {
+    // enables forbidden(): unauthorized admin pages answer with a real HTTP 403
+    authInterrupts: true,
+  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

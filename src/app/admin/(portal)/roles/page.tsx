@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { RolesManager } from "@/components/admin/roles-manager";
 import { pageAccess } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
@@ -9,8 +9,7 @@ import { listPermissions, listRoles } from "@/server/services/roles";
 export const metadata: Metadata = { title: "Roles" };
 
 export default async function RolesPage() {
-  const { ctx, allowed } = await pageAccess("role.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("role.view");
   const [roles, permissions] = await Promise.all([listRoles(ctx), listPermissions(ctx)]);
 
   const byGroup = new Map<string, { key: string; held: boolean }[]>();

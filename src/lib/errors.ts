@@ -4,6 +4,8 @@ export class AppError extends Error {
     message: string,
     readonly code: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION" | "CONFLICT" | "RATE_LIMITED",
     readonly fieldErrors?: Record<string, string[]>,
+    /** Seconds until the caller may try again (login lockout). */
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "AppError";
@@ -16,5 +18,12 @@ export const forbidden = (message = "You do not have permission to perform this 
 export const notFound = (what = "Record") => new AppError(`${what} was not found.`, "NOT_FOUND");
 export const conflict = (message: string) => new AppError(message, "CONFLICT");
 export const rateLimited = () => new AppError("Too many attempts. Please try again later.", "RATE_LIMITED");
+export const loginLocked = (seconds: number) =>
+  new AppError(
+    `Too many failed attempts. Try again in ${seconds} second${seconds === 1 ? "" : "s"}.`,
+    "RATE_LIMITED",
+    undefined,
+    seconds,
+  );
 export const invalid = (message: string, fieldErrors?: Record<string, string[]>) =>
   new AppError(message, "VALIDATION", fieldErrors);

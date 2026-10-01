@@ -132,6 +132,15 @@ export function QrManager({
                         Edit
                       </Button>
                     ) : null}
+                    {perms.delete ? (
+                      <ConfirmButton
+                        label="Delete"
+                        title="Delete this QR code?"
+                        description="The public link stops working. Collected feedback is kept."
+                        confirmLabel="Delete"
+                        action={() => deleteQrAction(r.id)}
+                      />
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -148,9 +157,7 @@ export function QrManager({
         <CreateDialog locations={locations} onClose={() => setCreating(false)} />
       ) : null}
       {viewing ? <ViewDialog row={viewing} onClose={() => setViewing(null)} /> : null}
-      {editing ? (
-        <EditDialog row={editing} canDelete={perms.delete} onClose={() => setEditing(null)} />
-      ) : null}
+      {editing ? <EditDialog row={editing} onClose={() => setEditing(null)} /> : null}
     </div>
   );
 }
@@ -290,7 +297,7 @@ function CreateDialog({ locations, onClose }: { locations: Locations; onClose: (
   );
 }
 
-function EditDialog({ row, canDelete, onClose }: { row: QrRow; canDelete: boolean; onClose: () => void }) {
+function EditDialog({ row, onClose }: { row: QrRow; onClose: () => void }) {
   const { run, pending, error, fieldErrors } = useAction();
   const [active, setActive] = useState(row.isActive);
   return (
@@ -338,19 +345,6 @@ function EditDialog({ row, canDelete, onClose }: { row: QrRow; canDelete: boolea
                   return r;
                 }}
               />
-              {canDelete ? (
-                <ConfirmButton
-                  label="Delete"
-                  title="Delete this QR code?"
-                  description="The public link stops working. Collected feedback is kept."
-                  confirmLabel="Delete"
-                  action={async () => {
-                    const r = await deleteQrAction(row.id);
-                    if (r.ok) onClose();
-                    return r;
-                  }}
-                />
-              ) : null}
             </div>
             <div className="flex gap-2">
               <Button type="button" variant="outline" onClick={onClose}>

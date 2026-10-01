@@ -1,5 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db/prisma";
+import * as mailer from "@/lib/mail/mailer";
+import { passwordSchema } from "@/lib/validation/auth";
+import { isWeakPassword } from "@/lib/validation/common-passwords";
+import { authenticateToken, login } from "@/server/services/auth";
 import { ALL_PERMISSIONS } from "@/lib/rbac/permissions";
 import {
   createBranch,
@@ -12,7 +16,16 @@ import {
 } from "@/server/services/organization";
 import { createRole, deleteRole, updateRole } from "@/server/services/roles";
 import { createUser, listUsers, resetUserPassword, setUserActive, updateUser } from "@/server/services/users";
-import { actorWith, cleanup, makeBranch, makeDistrict, makeRole, uid } from "./helpers";
+import {
+  actorWith,
+  cleanup,
+  makeBranch,
+  makeDistrict,
+  makeRole,
+  randomIp,
+  TEST_PASSWORD,
+  uid,
+} from "./helpers";
 
 let d1: { id: string };
 let d2: { id: string };
@@ -226,7 +239,9 @@ describe("privilege escalation", () => {
   it("cannot manage, reset or deactivate a user who holds more than you", async () => {
     const lowAdmin = await actorWith({ permissions: ["user.update", "user.deactivate", "dashboard.view"] });
     const powerful = await actorWith({ permissions: ["dashboard.view", "user.create", "feedback.view"] });
-    await expect(resetUserPassword(lowAdmin, powerful.userId)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      resetUserPassword(lowAdmin, powerful.userId, { currentPassword: TEST_PASSWORD }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(setUserActive(lowAdmin, powerful.userId, false)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
@@ -246,14 +261,63 @@ describe("privilege escalation", () => {
     await expect(setUserActive(actor, actor.userId, false)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("password reset issues a one-time password and forces a change", async () => {
+  it("password reset (email configured) emails a link: the administrator never sees a password", async () => {
     const admin = await actorWith({ permissions: ["user.update", "dashboard.view"] });
     const target = await actorWith({ permissions: ["dashboard.view"] });
-    const { temporaryPassword } = await resetUserPassword(admin, target.userId);
-    expect(temporaryPassword.length).toBeGreaterThanOrEqual(12);
+    const res = await resetUserPassword(admin, target.userId, { currentPassword: TEST_PASSWORD });
+    expect(res).toMatchObject({ temporaryPassword: null, emailSent: true });
     const row = await prisma.user.findUniqueOrThrow({ where: { id: target.userId } });
     expect(row.mustChangePassword).toBe(true);
-    expect(row.passwordHash).not.toContain(temporaryPassword);
+    // the old password no longer works and the user's sessions ended
+    await expect(
+      login({ email: target.email, password: TEST_PASSWORD }, { ip: randomIp() }),
+    ).rejects.toThrow();
+    expect(await authenticateToken(target.token)).toBeNull();
+  });
+
+  it("password reset (no email) issues an expiring temporary password and forces a change", async () => {
+    const spy = vi.spyOn(mailer, "emailEnabled").mockReturnValue(false);
+    try {
+      const admin = await actorWith({ permissions: ["user.update", "dashboard.view"] });
+      const target = await actorWith({ permissions: ["dashboard.view"] });
+      const res = await resetUserPassword(admin, target.userId, { currentPassword: TEST_PASSWORD });
+      expect(res.temporaryPassword!.length).toBeGreaterThanOrEqual(12);
+      expect(isWeakPassword(res.temporaryPassword!)).toBe(false);
+      expect(passwordSchema.safeParse(res.temporaryPassword).success).toBe(true);
+      const row = await prisma.user.findUniqueOrThrow({ where: { id: target.userId } });
+      expect(row.mustChangePassword).toBe(true);
+      expect(row.passwordHash).not.toContain(res.temporaryPassword!);
+      expect(row.tempPasswordExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+
+      const ok = await login({ email: target.email, password: res.temporaryPassword! }, { ip: randomIp() });
+      expect(ok.mustChangePassword).toBe(true);
+
+      // once the window has passed the temporary password is refused
+      await prisma.user.update({
+        where: { id: target.userId },
+        data: { tempPasswordExpiresAt: new Date(Date.now() - 1000) },
+      });
+      await expect(
+        login({ email: target.email, password: res.temporaryPassword! }, { ip: randomIp() }),
+      ).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("password reset requires the administrator's own password and audits failures", async () => {
+    const admin = await actorWith({ permissions: ["user.update", "dashboard.view"] });
+    const target = await actorWith({ permissions: ["dashboard.view"] });
+    await expect(
+      resetUserPassword(admin, target.userId, { currentPassword: "Not-My-Passw0rd!" }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(resetUserPassword(admin, target.userId, {})).rejects.toMatchObject({ code: "VALIDATION" });
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: target.userId } });
+    expect(row.mustChangePassword).toBe(false); // nothing changed
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: "REAUTH_FAILED", actorId: admin.userId },
+    });
+    expect(audit?.severity).toBe("HIGH");
   });
 });
 

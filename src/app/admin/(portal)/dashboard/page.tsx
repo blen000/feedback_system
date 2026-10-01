@@ -3,7 +3,7 @@ import Link from "next/link";
 import { KpiRow, OverviewCharts } from "@/components/charts/overview-charts";
 import { FilterBar } from "@/components/feedback/filter-bar";
 import { MarkReadButton } from "@/components/feedback/mark-read-button";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,8 +25,7 @@ const PRESETS = [
 ] as const;
 
 export default async function DashboardPage({ searchParams }: PageProps<"/admin/dashboard">) {
-  const { ctx, allowed } = await pageAccess("dashboard.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("dashboard.view");
 
   const filters = parseFilters(await searchParams);
   const canSeeFeedback = can(ctx, "feedback.view");

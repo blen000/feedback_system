@@ -67,18 +67,20 @@ _location_; each location shows its currently ACTIVE questionnaire (branch/depar
 
 ## Security model
 
-- **Sessions:** opaque 256-bit token in an `httpOnly`, `SameSite=Lax` cookie (`__Host-` + `Secure` in production);
-  only an HMAC of the token is stored; 8 h hard limit, 30 min idle; revoked instantly on deactivation or password change.
+- **Sessions:** opaque 256-bit token in an `httpOnly`, `SameSite=Strict` cookie (`__Host-` + `Secure` in production);
+  only an HMAC of the token is stored; 8 h hard limit, 30 min idle; at most 3 live sessions per user; revoked instantly on deactivation or password change.
 - **Email (SMTP):** with `SMTP_*` set, new users get an invitation link to choose their own password (nobody handles a password), and “Forgot password” emails a one-time link (60 min, single use, only a hash stored, identical answer whether or not the account exists, rate-limited, ends all sessions on success). Without SMTP the app falls back to administrator-set passwords. `SMTP_ALLOW_SELF_SIGNED=true` turns off certificate checking; use it only on a trusted network. Tests never send mail (in-memory capture driver).
-- **Login:** bcrypt, generic error messages, per-account lockout, per-source and per-account rate limits.
+- **Login:** bcrypt, generic error messages, and a server-enforced lockout: 5 failed attempts per email address, then exactly 30 seconds during which no attempt is evaluated (the login page shows a countdown that survives a refresh); plus a per-source flood limit.
+- **Passwords:** at least 10 characters with upper and lower case, a number and a special character; common passwords are rejected. Administrator resets require re-entering your own password and are alerted.
+- **Roles and menus:** a permission only works together with the ones its page needs (e.g. `reports.view` needs `feedback.view`); the role editor selects them and the server rejects incomplete roles. Menu, page and action checks all read the same permission list. Unauthorized pages answer HTTP 403.
 - **Privilege escalation:** you can only grant/edit roles, assign scopes and manage users whose access you already hold.
 - **Public endpoint:** every answer is re-validated server-side with the shared engine; layered rate limits;
   customer-safe error messages only; answers to hidden questions are dropped; contact details exist only on opt-in.
 - **Forwarding:** a user with `feedback.forward` can send a record they can see to an active colleague who holds `feedback.view`. It shares only that record; there are no assignments or statuses, just a read marker. The action is audited.
 - **Personal data:** phone numbers need the separate `feedback.view_contact` permission over the record's location.
 - **Exports:** limited to the intersection of the user's view and export scopes, audited, and neutralize spreadsheet formulas.
-- **Headers:** CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS, no-store on authenticated pages.
-- **Audit log:** logins, user/role/organization changes, questionnaire lifecycle, QR changes, exports, deletions. Secrets are never logged.
+- **Headers:** CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS (preload), COOP/COEP/CORP, a strict Permissions-Policy, no-store on authenticated pages.
+- **Audit log:** logins, authorization denials, user/role/organization changes, questionnaire lifecycle, QR changes, exports, deletions, with severity and client address. Append-only (database trigger). High-severity events email `SECURITY_ALERT_EMAILS` (default: super admins). Secrets are never logged. See `docs/deployment-hardening.md` for infrastructure settings.
 - `tests/security.test.ts` fails if a new server action does not reject signed-out callers.
 
 ### Deployment notes

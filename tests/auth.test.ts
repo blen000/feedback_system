@@ -52,13 +52,13 @@ describe("login", () => {
     });
   });
 
-  it("locks the account after repeated failures, even for the right password", async () => {
+  it("locks the login after 5 failures, even for the right password (see login-lockout.test.ts)", async () => {
     const { email } = await makeUser({ permissions: [] });
     for (let i = 0; i < 5; i++) {
       await login({ email, password: "wrong-password-1" }, { ip: randomIp() }).catch(() => undefined);
     }
     await expect(login({ email, password: TEST_PASSWORD }, { ip: randomIp() })).rejects.toMatchObject({
-      code: "UNAUTHENTICATED",
+      code: "RATE_LIMITED",
     });
   });
 

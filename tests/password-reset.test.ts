@@ -119,7 +119,7 @@ describe("invitations (user creation)", () => {
       to: "a@b.c",
       name: `<img src=x onerror=alert(1)> Evil`,
       link: "http://localhost:3000/reset-password?token=abc",
-      hours: 48,
+      hours: 2,
     });
     expect(mail.html).not.toContain("<img src=x");
     expect(mail.html).toContain("&lt;img");
@@ -228,10 +228,8 @@ describe("completing a reset", () => {
   it("sets the new password, ends every existing session, clears lockout and audits it", async () => {
     const u = await linkFor();
     const before = await login({ email: u.email, password: TEST_PASSWORD }, { ip: randomIp() });
-    await prisma.user.update({
-      where: { id: u.user.id },
-      data: { failedLoginCount: 3, lockedUntil: new Date(Date.now() + 600_000) },
-    });
+    for (let i = 0; i < 5; i++)
+      await login({ email: u.email, password: "Wrong-Passw0rd!" }, { ip: randomIp() }).catch(() => undefined); // locked
 
     await completePasswordReset(
       { token: u.token, newPassword: STRONG, confirmPassword: STRONG },

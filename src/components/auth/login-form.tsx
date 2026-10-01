@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { AuthField, authButton, authInput } from "./auth-field";
@@ -10,17 +10,59 @@ export function LoginForm({
   next,
   emailEnabled,
   notice,
+  initialLockSeconds = 0,
 }: {
   next?: string;
   emailEnabled: boolean;
   notice?: string;
+  /** Seconds of lockout left when the page was rendered (server-computed). */
+  initialLockSeconds?: number;
 }) {
-  const [state, action, pending] = useActionState(loginAction, undefined);
+  // The server states how long is left; the browser only counts down from there. Both timestamps come
+  // from one Date.now() so server and client render the same first value.
+  const [clock, setClock] = useState(() => {
+    const t = Date.now();
+    return { now: t, endsAt: t + initialLockSeconds * 1000 };
+  });
+  const remaining = Math.max(0, Math.ceil((clock.endsAt - clock.now) / 1000));
+  const locked = remaining > 0;
+
+  const [state, action, pending] = useActionState(
+    async (prev: Parameters<typeof loginAction>[0], formData: FormData) => {
+      const res = await loginAction(prev, formData);
+      if (!res.ok && res.retryAfter) {
+        const t = Date.now();
+        setClock({ now: t, endsAt: t + res.retryAfter * 1000 });
+      }
+      return res;
+    },
+    undefined,
+  );
+
+  useEffect(() => {
+    if (!locked) return;
+    const tick = () => setClock((c) => ({ ...c, now: Date.now() }));
+    const id = setInterval(tick, 250);
+    document.addEventListener("visibilitychange", tick); // returning to the tab re-syncs immediately
+    window.addEventListener("pageshow", tick); // back/forward cache restore
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("pageshow", tick);
+    };
+  }, [locked, clock.endsAt]);
+
   const [show, setShow] = useState(false);
   const [help, setHelp] = useState(false);
 
   return (
-    <form action={action} className="grid gap-4">
+    <form
+      action={action}
+      onSubmit={(e) => {
+        if (locked) e.preventDefault(); // no attempt can even be sent during the lockout
+      }}
+      className="grid gap-4"
+    >
       {notice ? (
         <p
           role="status"
@@ -101,14 +143,22 @@ export function LoginForm({
         Keep me signed in
       </label>
 
-      {state && !state.ok ? (
+      {locked ? (
+        <p role="alert" className="rounded-[6px] bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
+          Too many failed attempts. You can try again in{" "}
+          <strong className="tabular-nums" aria-live="off">
+            {remaining}
+          </strong>{" "}
+          second{remaining === 1 ? "" : "s"}.
+        </p>
+      ) : state && !state.ok && !state.retryAfter ? (
         <p role="alert" className="rounded-[6px] bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
           {state.error}
         </p>
       ) : null}
 
-      <button type="submit" disabled={pending} className={authButton}>
-        {pending ? "Signing in…" : "Sign in"}
+      <button type="submit" disabled={pending || locked} className={authButton}>
+        {locked ? `Try again in ${remaining}s` : pending ? "Signing in…" : "Sign in"}
       </button>
     </form>
   );

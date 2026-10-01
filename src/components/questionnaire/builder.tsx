@@ -166,7 +166,7 @@ export function QuestionnaireBuilder({
                 : "Never published"}
             </span>
           </div>
-          {perms.publish || perms.update ? (
+          {perms.publish || perms.update || perms.delete ? (
             <div className="flex flex-wrap gap-2">
               {status === "DRAFT" && perms.publish ? (
                 <Button

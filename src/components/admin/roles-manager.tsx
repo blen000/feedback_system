@@ -19,6 +19,7 @@ import { ConfirmButton } from "@/components/admin/confirm-dialog";
 import { Field, FormError } from "@/components/admin/form-bits";
 import { useAction } from "@/components/admin/use-action";
 import { deleteRoleAction, saveRoleAction } from "@/server/actions/admin";
+import { dependentsOf, prerequisitesOf } from "@/lib/rbac/permissions";
 
 export interface RoleRow {
   id: string;
@@ -129,14 +130,23 @@ function RoleDialog({
   const { run, pending, error, fieldErrors } = useAction();
   const [selected, setSelected] = useState<Set<string>>(new Set(row?.permissions ?? []));
 
+  const held = new Map(groups.flatMap((g) => g.permissions.map((p) => [p.key, p.held] as const)));
+
+  /** Ticking selects what the permission needs; unticking removes what depends on it. */
   function toggle(key: string, on: boolean) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (on) next.add(key);
-      else next.delete(key);
+      if (on) for (const k of [key, ...prerequisitesOf(key)]) next.add(k);
+      else for (const k of [key, ...dependentsOf(key)]) next.delete(k);
       return next;
     });
   }
+
+  /** A permission can be added only if the editor may also grant everything it needs. */
+  const blocked = (key: string) =>
+    !selected.has(key) &&
+    (!held.get(key) || prerequisitesOf(key).some((r) => !selected.has(r) && !held.get(r)));
+  const needs = (key: string) => prerequisitesOf(key).map((r) => r.replace(".", " "));
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -200,11 +210,12 @@ function RoleDialog({
                     {g.permissions.map((p) => (
                       <label
                         key={p.key}
-                        className={`flex items-center gap-2 text-sm ${p.held ? "" : "opacity-50"}`}
+                        className={`flex items-center gap-2 text-sm ${blocked(p.key) ? "opacity-50" : ""}`}
+                        title={needs(p.key).length ? `Also needs: ${needs(p.key).join(", ")}` : undefined}
                       >
                         <Checkbox
                           checked={selected.has(p.key)}
-                          disabled={!p.held && !selected.has(p.key)}
+                          disabled={blocked(p.key)}
                           onCheckedChange={(v) => toggle(p.key, v === true)}
                         />
                         {p.key.split(".")[1]}

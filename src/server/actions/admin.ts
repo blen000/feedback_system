@@ -1,5 +1,6 @@
 "use server";
 
+import { requestMeta } from "@/lib/auth/session";
 import { runAction } from "./helpers";
 import * as roles from "@/server/services/roles";
 import * as users from "@/server/services/users";
@@ -42,6 +43,6 @@ export async function setUserActiveAction(id: string, active: boolean) {
     message: active ? "User activated." : "User deactivated. Their sessions were ended.",
   });
 }
-export async function resetPasswordAction(id: string) {
-  return runAction((ctx) => users.resetUserPassword(ctx, id));
+export async function resetPasswordAction(id: string, input: { currentPassword: string }) {
+  return runAction(async (ctx) => users.resetUserPassword(ctx, id, input, await requestMeta()));
 }

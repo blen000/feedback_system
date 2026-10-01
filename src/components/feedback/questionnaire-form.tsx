@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { StarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { validateSubmission, visibleRefs } from "@/lib/questionnaire/engine";
+import { normalizePhone, PHONE_MESSAGE } from "@/lib/validation/phone";
 import {
   EMOJI_SCALE,
   SUPPORTED_LOCALES,
@@ -63,8 +64,8 @@ export function QuestionnaireForm({
     e.preventDefault();
     const result = validateSubmission(definition, answers);
     const found: Record<string, string> = result.ok ? {} : result.errors;
-    if (wantsFollowUp && definition.collectContact && !/^\+?[0-9 ()-]{7,20}$/.test(phone.trim())) {
-      found._phone = "Enter a valid phone number.";
+    if (wantsFollowUp && definition.collectContact && !normalizePhone(phone)) {
+      found._phone = PHONE_MESSAGE;
     }
     setErrors(found);
     if (Object.keys(found).length) {
@@ -168,6 +169,7 @@ export function QuestionnaireForm({
                 id="contact-phone"
                 type="tel"
                 inputMode="tel"
+                maxLength={30}
                 autoComplete="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}

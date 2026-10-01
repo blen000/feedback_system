@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { BranchesManager } from "@/components/admin/org/branches-manager";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { pageAccess } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
 import { listBranches, listDistricts } from "@/server/services/organization";
@@ -8,8 +8,7 @@ import { listBranches, listDistricts } from "@/server/services/organization";
 export const metadata: Metadata = { title: "Branches" };
 
 export default async function BranchesPage() {
-  const { ctx, allowed } = await pageAccess("branch.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("branch.view");
   const branches = await listBranches(ctx);
   // District choices for the form: everything the user may view, else the districts of visible branches.
   const districts = can(ctx, "district.view")

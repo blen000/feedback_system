@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SentimentBadge, Stars } from "@/components/feedback/rating";
-import { AccessDenied, EmptyState, PageHeader } from "@/components/admin/page-header";
+import { EmptyState, PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,8 +14,7 @@ const fmt = (d: Date) =>
   d.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Addis_Ababa" });
 
 export default async function ForwardedPage() {
-  const { ctx, allowed } = await pageAccess("feedback.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("feedback.view");
   const rows = await listForwardedToMe(ctx);
   return (
     <>

@@ -4,6 +4,7 @@ import { hashPassword } from "@/lib/auth/crypto";
 import type { AuthContext } from "@/lib/rbac/authorize";
 import { authenticateToken, login } from "@/server/services/auth";
 import type { ScopeType } from "@/lib/rbac/scope";
+import { prerequisitesOf } from "@/lib/rbac/permissions";
 
 export const TEST_PASSWORD = "Test-Passw0rd-123";
 const RUN = randomBytes(3).toString("hex").toUpperCase();
@@ -20,7 +21,12 @@ export async function makeBranch(districtId: string, name = "Test Branch") {
   return prisma.branch.create({ data: { code: uid("TB"), name, districtId } });
 }
 
-export async function makeRole(permissions: string[], key = uid("TR")) {
+/**
+ * Fixtures list only the permission under test; like a real role editor they get the permissions it
+ * depends on (e.g. user.update brings user.view). Pass raw=true to build a deliberately incomplete role.
+ */
+export async function makeRole(permissions: string[], key = uid("TR"), raw = false) {
+  if (!raw) permissions = [...new Set(permissions.flatMap((p) => [p, ...prerequisitesOf(p)]))];
   const perms = await prisma.permission.findMany({ where: { key: { in: permissions } } });
   if (perms.length !== permissions.length) throw new Error("unknown permission in test fixture");
   return prisma.role.create({
@@ -35,10 +41,12 @@ interface UserOpts {
   branchId?: string;
   status?: "ACTIVE" | "INACTIVE";
   roleId?: string;
+  /** do not add prerequisite permissions */
+  raw?: boolean;
 }
 
 export async function makeUser(opts: UserOpts) {
-  const role = opts.roleId ? { id: opts.roleId } : await makeRole(opts.permissions);
+  const role = opts.roleId ? { id: opts.roleId } : await makeRole(opts.permissions, undefined, opts.raw);
   const email = `${uid("u").toLowerCase()}@test.local`;
   const user = await prisma.user.create({
     data: {
@@ -107,9 +115,13 @@ export async function cleanup() {
     select: { id: true },
   });
   const ids = users.map((u) => u.id);
-  await prisma.auditLog.deleteMany({
-    where: { OR: [{ actorId: { in: ids } }, { resourceId: { in: ids } }] },
-  });
+  // the audit table is append-only; test cleanup is the one place allowed to purge (see the trigger migration)
+  await prisma.$transaction([
+    prisma.$executeRaw`SELECT set_config('app.audit_purge', 'on', true)`,
+    prisma.auditLog.deleteMany({
+      where: { OR: [{ actorId: { in: ids } }, { resourceId: { in: ids } }] },
+    }),
+  ]);
   await prisma.feedbackForward.deleteMany({
     where: { OR: [{ fromUserId: { in: ids } }, { toUserId: { in: ids } }] },
   });
@@ -121,7 +133,11 @@ export async function cleanup() {
   await prisma.department.deleteMany({ where: { code: { startsWith: "TDEP" } } });
   await prisma.branch.deleteMany({ where: { code: { startsWith: "TB" } } });
   await prisma.district.deleteMany({ where: { code: { startsWith: "TD" } } });
-  await prisma.rateLimitBucket.deleteMany({ where: { key: { startsWith: "login:" } } });
+  // login throttle rows are keyed by a hash of the email: drop everything touched recently
+  await prisma.loginThrottle.deleteMany({ where: { updatedAt: { gte: new Date(Date.now() - 3600_000) } } });
+  await prisma.rateLimitBucket.deleteMany({
+    where: { OR: [{ key: { startsWith: "login:" } }, { key: { startsWith: "reauth:" } }] },
+  });
   await prisma.rateLimitBucket.deleteMany({
     where: { OR: [{ key: { startsWith: "scan:" } }, { key: { startsWith: "submit:" } }] },
   });

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { DepartmentsManager } from "@/components/admin/org/departments-manager";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { pageAccess } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
 import { listDepartments, listDistricts } from "@/server/services/organization";
@@ -8,8 +8,7 @@ import { listDepartments, listDistricts } from "@/server/services/organization";
 export const metadata: Metadata = { title: "Departments" };
 
 export default async function DepartmentsPage() {
-  const { ctx, allowed } = await pageAccess("department.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("department.view");
   const departments = await listDepartments(ctx);
   const districts = can(ctx, "district.view")
     ? (await listDistricts(ctx)).map((d) => ({ id: d.id, name: d.name }))

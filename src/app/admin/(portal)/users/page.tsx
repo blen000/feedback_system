@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { UsersManager } from "@/components/admin/users-manager";
 import { pageAccess } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
@@ -9,8 +9,7 @@ import { listAssignmentOptions, listUsers } from "@/server/services/users";
 export const metadata: Metadata = { title: "Users" };
 
 export default async function UsersPage() {
-  const { ctx, allowed } = await pageAccess("user.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("user.view");
 
   const canManage = can(ctx, "user.create") || can(ctx, "user.update");
   const [users, options] = await Promise.all([listUsers(ctx), canManage ? listAssignmentOptions(ctx) : null]);

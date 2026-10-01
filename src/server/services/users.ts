@@ -11,11 +11,21 @@ import {
   type AuthContext,
 } from "@/lib/rbac/authorize";
 import { branchWhere, departmentWhere, districtWhere } from "@/lib/rbac/scope";
-import { createUserSchema, updateUserSchema, type ScopeInput } from "@/lib/validation/admin";
+import {
+  createUserSchema,
+  resetUserPasswordSchema,
+  updateUserSchema,
+  type ScopeInput,
+} from "@/lib/validation/admin";
 import { parse } from "@/lib/validation/parse";
 import { Prisma } from "@/generated/prisma/client";
-import { revokeAllSessions } from "./auth";
-import { sendInvite } from "./password-reset";
+import { clearLoginThrottle } from "./login-throttle";
+import { requireReauthentication, revokeAllSessions, type RequestMeta } from "./auth";
+import { sendAdminReset, sendInvite } from "./password-reset";
+
+/** An administrator-issued temporary password (no-email deployments) stops working after this long. */
+export const TEMP_PASSWORD_HOURS = 24;
+const tempPasswordExpiry = () => new Date(Date.now() + TEMP_PASSWORD_HOURS * 3600_000);
 import { resolveTarget } from "./targets";
 
 const userInclude = {
@@ -178,6 +188,7 @@ export async function createUser(ctx: AuthContext, input: unknown) {
         // invite mode: an unguessable placeholder until the user sets a real password
         passwordHash: await hashPassword(inviteMode ? generateToken() : data.password!),
         mustChangePassword: true,
+        tempPasswordExpiresAt: inviteMode ? null : tempPasswordExpiry(),
         roles: { create: toRows(data.assignments) },
       },
     });
@@ -245,8 +256,9 @@ export async function setUserActive(ctx: AuthContext, id: string, active: boolea
   const existing = await assertCanManage(ctx, id);
   await prisma.user.update({
     where: { id },
-    data: { status: active ? "ACTIVE" : "INACTIVE", failedLoginCount: 0, lockedUntil: null },
+    data: { status: active ? "ACTIVE" : "INACTIVE" },
   });
+  await clearLoginThrottle(existing.email);
   if (!active) await revokeAllSessions(id); // takes effect immediately
   await writeAudit({
     actorId: ctx.userId,
@@ -257,28 +269,68 @@ export async function setUserActive(ctx: AuthContext, id: string, active: boolea
   });
 }
 
-/** Returns a one-time temporary password; the user must change it at next sign-in. */
-export async function resetUserPassword(ctx: AuthContext, id: string) {
+export interface PasswordResetResult {
+  /** Present only when email is not configured; shown once to the administrator. */
+  temporaryPassword: string | null;
+  /** True when the user was emailed a one-time link instead (the administrator never sees a password). */
+  emailSent: boolean;
+  validForHours: number | null;
+}
+
+/**
+ * Resets another user's password. Sensitive, so:
+ *  - the administrator must re-enter their own password (step-up),
+ *  - with email configured the user receives a one-time link and nobody sees a password,
+ *  - otherwise a temporary password is issued that expires after TEMP_PASSWORD_HOURS,
+ *  - all of the user's sessions end, and the action is audited at high severity (which alerts).
+ */
+export async function resetUserPassword(
+  ctx: AuthContext,
+  id: string,
+  input: unknown,
+  meta: RequestMeta = {},
+): Promise<PasswordResetResult> {
   requirePermission(ctx, "user.update");
   if (id === ctx.userId) throw invalid("Use “Change password” to update your own password.");
+  const { currentPassword } = parse(resetUserPasswordSchema, input);
   const existing = await assertCanManage(ctx, id);
-  const temporaryPassword = generateTemporaryPassword();
-  await prisma.user.update({
-    where: { id },
-    data: {
-      passwordHash: await hashPassword(temporaryPassword),
-      mustChangePassword: true,
-      failedLoginCount: 0,
-      lockedUntil: null,
-    },
-  });
+  await requireReauthentication(ctx, currentPassword, meta);
+
+  let result: PasswordResetResult;
+  if (emailEnabled()) {
+    // deliver first: if the mail server refuses, the account is left untouched
+    if (!(await sendAdminReset(existing)))
+      throw invalid("The email could not be sent. Please try again later.");
+    await prisma.user.update({
+      where: { id },
+      data: {
+        passwordHash: await hashPassword(generateToken()), // the old password stops working now
+        mustChangePassword: true,
+        tempPasswordExpiresAt: null,
+      },
+    });
+    result = { temporaryPassword: null, emailSent: true, validForHours: null };
+  } else {
+    const temporaryPassword = generateTemporaryPassword();
+    await prisma.user.update({
+      where: { id },
+      data: {
+        passwordHash: await hashPassword(temporaryPassword),
+        mustChangePassword: true,
+        tempPasswordExpiresAt: tempPasswordExpiry(),
+      },
+    });
+    result = { temporaryPassword, emailSent: false, validForHours: TEMP_PASSWORD_HOURS };
+  }
   await revokeAllSessions(id);
+  await clearLoginThrottle(existing.email);
   await writeAudit({
     actorId: ctx.userId,
     action: "USER_PASSWORD_RESET",
     resource: "User",
     resourceId: id,
-    metadata: { email: existing.email },
+    metadata: { email: existing.email, delivery: result.emailSent ? "email" : "temporary_password" },
+    ip: meta.ip,
   });
-  return { temporaryPassword };
+  return result;
 }

@@ -63,15 +63,25 @@ export function inviteEmail(input: { to: string; name: string; link: string; hou
   };
 }
 
-export function resetEmail(input: { to: string; name: string; link: string; minutes: number }): Mail {
+export function resetEmail(input: {
+  to: string;
+  name: string;
+  link: string;
+  minutes: number;
+  /** Set when an administrator (not the user) started the reset. */
+  byAdmin?: boolean;
+}): Mail {
   const first = input.name.split(" ")[0] || input.name;
+  const intro = input.byAdmin
+    ? "An administrator reset your password. Use the link below to choose a new one:"
+    : "We received a request to reset your password. Use the link below to choose a new one:";
   return {
     to: input.to,
     subject: `Reset your ${APP_NAME} password`,
     text: [
       `Hello ${first},`,
       "",
-      "We received a request to reset your password. Use the link below to choose a new one:",
+      intro,
       input.link,
       "",
       `This link can be used once and expires in ${input.minutes} minutes.`,
@@ -81,11 +91,47 @@ export function resetEmail(input: { to: string; name: string; link: string; minu
       heading: "Reset your password",
       body: [
         `Hello ${first},`,
-        "We received a request to reset your password. Choose a new one with the button below.",
+        input.byAdmin
+          ? "An administrator reset your password. Choose a new one with the button below."
+          : "We received a request to reset your password. Choose a new one with the button below.",
       ],
       cta: "Reset my password",
       link: input.link,
       footer: `This link can be used once and expires in ${input.minutes} minutes. If you did not ask for it, ignore this email and your password will stay the same.`,
+    }),
+  };
+}
+
+/** Plain notification for the security team; contains no credentials or links. */
+export function securityAlertEmail(input: {
+  to: string;
+  severity: string;
+  action: string;
+  actorId: string | null;
+  resource: string;
+  ip: string | null;
+  at: string;
+  detail: string;
+}): Mail {
+  const lines = [
+    `Severity: ${input.severity}`,
+    `Event: ${input.action}`,
+    `Time: ${input.at}`,
+    `Actor: ${input.actorId ?? "unknown / anonymous"}`,
+    `Target: ${input.resource}`,
+    `Source address: ${input.ip ?? "unknown"}`,
+    `Details: ${input.detail}`,
+  ];
+  return {
+    to: input.to,
+    subject: `[${input.severity}] Security event: ${input.action}`,
+    text: [...lines, "", "Review the audit log for the full trail."].join("\n"),
+    html: layout({
+      heading: `Security event: ${input.action}`,
+      body: lines,
+      cta: "Open audit log",
+      link: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/admin/audit-logs`,
+      footer: "You receive this because you are a security contact for this system.",
     }),
   };
 }

@@ -18,9 +18,10 @@ import { z } from "zod";
 import type { TokenPurpose } from "@/generated/prisma/client";
 import type { RequestMeta } from "./auth";
 import { revokeAllSessions } from "./auth";
+import { clearLoginThrottle } from "./login-throttle";
 
 export const RESET_MINUTES = 60;
-export const INVITE_HOURS = 48;
+export const INVITE_HOURS = 2;
 export const INVALID_LINK = "This link is invalid or has expired.";
 
 const linkFor = (token: string) =>
@@ -58,6 +59,28 @@ export async function sendInvite(
     metadata: { email: user.email },
   });
   return true;
+}
+
+/**
+ * Administrator-initiated reset: emails the user a one-time link (no password is ever shown to the
+ * administrator). Returns false when delivery failed so the caller can abort before changing anything.
+ */
+export async function sendAdminReset(user: { id: string; email: string; name: string }): Promise<boolean> {
+  const token = await issueToken(user.id, "RESET");
+  try {
+    await sendMail(
+      resetEmail({
+        to: user.email,
+        name: user.name,
+        link: linkFor(token),
+        minutes: RESET_MINUTES,
+        byAdmin: true,
+      }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -133,16 +156,16 @@ export async function completePasswordReset(input: unknown, meta: RequestMeta = 
   if (claimed.count !== 1) throw new AppError(INVALID_LINK, "VALIDATION");
 
   const row = await prisma.passwordToken.findUniqueOrThrow({ where: { tokenHash: hash } });
-  await prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: row.userId },
     data: {
       passwordHash: await hashPassword(newPassword),
       mustChangePassword: false,
-      failedLoginCount: 0,
-      lockedUntil: null,
+      tempPasswordExpiresAt: null,
     },
   });
   await prisma.passwordToken.deleteMany({ where: { userId: row.userId, usedAt: null } }); // void any other outstanding links
+  await clearLoginThrottle(updated.email);
   await revokeAllSessions(row.userId); // anyone signed in with the old password is signed out
   await writeAudit({
     actorId: row.userId,

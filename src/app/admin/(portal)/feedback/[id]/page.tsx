@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { DeleteFeedbackButton } from "@/components/feedback/delete-feedback-button";
 import { ForwardButton } from "@/components/feedback/forward-button";
 import { SentimentBadge, Stars } from "@/components/feedback/rating";
-import { AccessDenied, PageHeader } from "@/components/admin/page-header";
+import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,8 +16,7 @@ export const metadata: Metadata = { title: "Feedback details" };
 
 export default async function FeedbackDetailPage({ params }: PageProps<"/admin/feedback/[id]">) {
   const { id } = await params;
-  const { ctx, allowed } = await pageAccess("feedback.view");
-  if (!allowed) return <AccessDenied />;
+  const { ctx } = await pageAccess("feedback.view");
 
   let f;
   try {

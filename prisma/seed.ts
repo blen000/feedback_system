@@ -9,7 +9,12 @@ import { randomBytes } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import { PrismaClient, type ScopeType } from "../src/generated/prisma/client";
-import { ALL_PERMISSIONS, permissionGroup, SYSTEM_ROLES } from "../src/lib/rbac/permissions";
+import {
+  ALL_PERMISSIONS,
+  incompletePermissions,
+  permissionGroup,
+  SYSTEM_ROLES,
+} from "../src/lib/rbac/permissions";
 import type { AuthContext } from "../src/lib/rbac/authorize";
 import { createQuestion } from "../src/server/services/questions";
 import {
@@ -53,11 +58,16 @@ async function seedPermissionsAndRoles() {
   const idOf = new Map(perms.map((p) => [p.key, p.id]));
 
   for (const def of SYSTEM_ROLES) {
-    const existing = await prisma.role.findUnique({ where: { key: def.key } });
+    // Only SUPER_ADMIN is protected; the other built-in roles are ordinary, deletable roles.
+    const isSystem = def.key === "SUPER_ADMIN";
+    let existing = await prisma.role.findUnique({ where: { key: def.key } });
+    if (existing && existing.isSystem !== isSystem) {
+      existing = await prisma.role.update({ where: { id: existing.id }, data: { isSystem } });
+    }
     const role =
       existing ??
       (await prisma.role.create({
-        data: { key: def.key, name: def.name, description: def.description, isSystem: true },
+        data: { key: def.key, name: def.name, description: def.description, isSystem },
       }));
     // New roles get their default permissions. Existing roles keep administrator edits,
     // except SUPER_ADMIN which always receives the complete catalog (incl. newly added permissions).
@@ -74,6 +84,31 @@ async function seedPermissionsAndRoles() {
         skipDuplicates: true,
       });
     }
+  }
+}
+
+/**
+ * Keeps stored roles consistent with the permission catalog:
+ *  - permissions the application no longer enforces are removed (with their role grants),
+ *  - a role holding a permission without its prerequisites (e.g. reports.view without feedback.view) is
+ *    reported. It is NOT widened automatically: sign-in already ignores the orphaned permissions, and an
+ *    administrator decides whether to add the prerequisites or drop the permission in /admin/roles.
+ */
+async function reconcileRoles() {
+  const removed = await prisma.permission.deleteMany({ where: { key: { notIn: ALL_PERMISSIONS } } });
+  if (removed.count) console.log(`Removed ${removed.count} obsolete permission(s).`);
+
+  const roles = await prisma.role.findMany({
+    where: { deletedAt: null },
+    include: { permissions: { include: { permission: { select: { key: true } } } } },
+  });
+  for (const role of roles) {
+    const gaps = incompletePermissions(role.permissions.map((p) => p.permission.key));
+    if (!gaps.length) continue;
+    console.warn(
+      `Role ${role.key} has permissions without their prerequisites (they have no effect until fixed in /admin/roles):`,
+    );
+    for (const g of gaps) console.warn(`  ${g.key} needs ${g.missing.join(", ")}`);
   }
 }
 
@@ -127,8 +162,6 @@ async function upsertUser(
             passwordHash,
             mustChangePassword: opts.mustChangePassword,
             status: "ACTIVE",
-            failedLoginCount: 0,
-            lockedUntil: null,
             deletedAt: null,
           },
         })
@@ -289,6 +322,7 @@ async function seedSample(districtId: string, boleId: string) {
 
 async function main() {
   await seedPermissionsAndRoles();
+  await reconcileRoles();
   const { district, bole } = await seedOrganization();
 
   const configured = process.env.SEED_PASSWORD;

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 import { writeAudit } from "@/lib/audit";
 import { conflict, forbidden, invalid, notFound } from "@/lib/errors";
 import { actorHoldsAll, requirePermission, type AuthContext } from "@/lib/rbac/authorize";
+import { incompletePermissions, PERMISSION_CATALOG } from "@/lib/rbac/permissions";
 import { roleSchema } from "@/lib/validation/admin";
 import { parse } from "@/lib/validation/parse";
 import { Prisma } from "@/generated/prisma/client";
@@ -24,7 +25,11 @@ export async function listRoles(ctx: AuthContext) {
 export async function listPermissions(ctx: AuthContext) {
   // Needed to render the role editor and the user form; gated like the roles pages.
   requirePermission(ctx, "role.view");
-  return prisma.permission.findMany({ orderBy: [{ group: "asc" }, { key: "asc" }] });
+  // only permissions the application actually enforces (old rows may linger in the table)
+  const rows = await prisma.permission.findMany({ orderBy: [{ group: "asc" }, { key: "asc" }] });
+  return rows.filter((p) =>
+    (PERMISSION_CATALOG as Record<string, readonly string[]>)[p.group]?.includes(p.key.split(".")[1]),
+  );
 }
 
 function present(r: Prisma.RoleGetPayload<{ include: typeof roleInclude }>) {
@@ -37,6 +42,15 @@ function present(r: Prisma.RoleGetPayload<{ include: typeof roleInclude }>) {
     userCount: r._count.users,
     permissions: r.permissions.map((p) => p.permission.key).sort(),
   };
+}
+
+/** A role must be usable: every permission comes with the ones its page needs (see PERMISSION_REQUIRES). */
+function assertComplete(keys: string[]) {
+  const gaps = incompletePermissions(keys);
+  if (gaps.length)
+    throw invalid("Some permissions need others.", {
+      permissions: gaps.map((g) => `${g.key} also requires ${g.missing.join(", ")}`),
+    });
 }
 
 async function assertPermissionsExist(keys: string[]) {
@@ -53,6 +67,7 @@ export async function createRole(ctx: AuthContext, input: unknown) {
   await assertPermissionsExist(keys);
   // cannot mint a role more powerful than yourself
   if (!actorHoldsAll(ctx, keys)) throw forbidden("You can only grant permissions that you hold yourself.");
+  assertComplete(keys);
 
   try {
     const role = await prisma.role.create({
@@ -97,6 +112,7 @@ export async function updateRole(ctx: AuthContext, id: string, input: unknown) {
   if (!actorHoldsAll(ctx, [...current, ...keys])) {
     throw forbidden("You can only edit roles whose permissions you hold yourself.");
   }
+  assertComplete(keys);
   // Lock-out protection: the SUPER_ADMIN role must keep every permission.
   if (existing.key === "SUPER_ADMIN" && current.some((k) => !keys.includes(k))) {
     throw conflict("The Super Admin role must keep all permissions.");
