@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import jsQR from "jsqr";
+import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { generatePublicCode, PUBLIC_CODE_PATTERN, publicUrl, qrPng, qrSvg } from "@/lib/qr/generate";
@@ -90,6 +92,21 @@ describe("QR images", () => {
     expect(svg).toContain("<svg");
     const png = await qrPng("ABCD2345", 256);
     expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // PNG signature
+  });
+
+  it("embeds the centre logo and still decodes to the public URL", async () => {
+    const decode = async (image: Buffer) => {
+      const { data, info } = await sharp(image).flatten({ background: "#ffffff" }).ensureAlpha().raw().toBuffer({
+        resolveWithObject: true,
+      });
+      return jsQR(new Uint8ClampedArray(data), info.width, info.height)?.data;
+    };
+    const svg = await qrSvg("ABCD2345");
+    expect(svg).toContain("<image href=\"data:image/png;base64,");
+    for (const width of [256, 1024]) expect(await decode(await qrPng("ABCD2345", width))).toBe(publicUrl("ABCD2345"));
+    expect(await decode(await sharp(Buffer.from(svg), { density: 300 }).png().toBuffer())).toBe(
+      publicUrl("ABCD2345"),
+    );
   });
 });
 
