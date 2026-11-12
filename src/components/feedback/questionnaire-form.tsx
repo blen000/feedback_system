@@ -398,11 +398,18 @@ function QuestionBlock({
 }) {
   const t = (l?: Record<string, string>) => pick(l, locale, defaultLocale);
   const id = `q-${q.ref}`;
+  // too-long text is flagged while typing, not only when moving on
+  const limit = textLimit(q);
+  const tooLong =
+    limit !== null && typeof value === "string" && value.trim().length > limit
+      ? `Please use at most ${limit} characters.`
+      : undefined;
+  const message = error ?? tooLong;
   return (
     <section
       id={id}
       aria-labelledby={`${id}-label`}
-      className={cn("space-y-3 rounded-xl border bg-card p-4", error && "border-destructive")}
+      className={cn("space-y-3 rounded-xl border bg-card p-4", message && "border-destructive")}
     >
       <div>
         <h2 id={`${id}-label`} className="text-lg font-medium leading-snug">
@@ -418,13 +425,30 @@ function QuestionBlock({
         ) : null}
       </div>
       <Input q={q} t={t} id={id} value={value} onChange={onChange} />
-      {error ? (
+      {limit !== null && typeof value === "string" && value.trim().length >= limit * 0.8 ? (
+        <p
+          className={cn(
+            "text-right text-xs tabular-nums",
+            tooLong ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {value.trim().length} / {limit}
+        </p>
+      ) : null}
+      {message ? (
         <p role="alert" className="text-sm text-destructive">
-          {error}
+          {message}
         </p>
       ) : null}
     </section>
   );
+}
+
+/** Character limit of a text question (same defaults as the engine), or null for other types. */
+function textLimit(q: DefinitionQuestion): number | null {
+  if (q.type === "SHORT_TEXT") return q.config.maxLength ?? 200;
+  if (q.type === "LONG_TEXT") return q.config.maxLength ?? 2000;
+  return null;
 }
 
 const choiceBtn = (on: boolean) =>
@@ -590,7 +614,8 @@ function Input({
         <input
           type="text"
           aria-labelledby={`${id}-label`}
-          maxLength={q.config.maxLength ?? 200}
+          // the real limit is shown and enforced as a message; this only stops runaway pastes
+          maxLength={(q.config.maxLength ?? 200) * 2}
           placeholder={t(q.placeholder)}
           value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value)}
@@ -603,7 +628,7 @@ function Input({
         <textarea
           aria-labelledby={`${id}-label`}
           rows={4}
-          maxLength={q.config.maxLength ?? 2000}
+          maxLength={(q.config.maxLength ?? 2000) * 2}
           placeholder={t(q.placeholder)}
           value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value)}

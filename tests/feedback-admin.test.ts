@@ -204,6 +204,11 @@ describe("list, scope and filters", () => {
       sentiment: "NEGATIVE",
     });
     expect(parseFilters({ from: "2026-02-01", to: "2026-01-01" }).from).toBeUndefined(); // inconsistent range dropped
+    // only the contradictory date range is ignored; the other filters still apply
+    const kept = parseFilters({ from: "2026-02-01", to: "2026-01-01", sentiment: "NEGATIVE", minRating: "1" });
+    expect(kept).toMatchObject({ sentiment: "NEGATIVE", minRating: 1 });
+    expect(kept.from).toBeUndefined();
+    expect(kept.to).toBeUndefined();
   });
 
   it("offers answer filters only for questionnaires the actor can see feedback for", async () => {

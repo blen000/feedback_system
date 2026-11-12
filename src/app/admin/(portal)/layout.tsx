@@ -8,6 +8,8 @@ import { requireAuth } from "@/lib/auth/session";
 import { can } from "@/lib/rbac/authorize";
 import { unreadForwardCount } from "@/server/services/forwards";
 import { NAV } from "@/lib/rbac/nav";
+import { SessionTimeout } from "@/components/auth/session-timeout";
+import { SESSION_IDLE_MS } from "@/server/services/auth";
 
 export default async function PortalLayout({ children }: LayoutProps<"/admin">) {
   const ctx = await requireAuth();
@@ -32,7 +34,7 @@ export default async function PortalLayout({ children }: LayoutProps<"/admin">) 
     <SidebarProvider>
       <AdminSidebar groups={groups} user={{ name: ctx.name, email: ctx.email }} />
       <SidebarInset className="min-w-0">
-        <header className="flex h-14 items-center gap-2 border-b px-4">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-[#e2d6c0] bg-[#efe6d4] px-4 dark:border-[#38302a] dark:bg-[#1f1a15] shadow-[0_1px_2px_rgba(60,40,20,0.05)]">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-5" />
           <AdminBreadcrumbs />
@@ -40,6 +42,7 @@ export default async function PortalLayout({ children }: LayoutProps<"/admin">) 
         </header>
         <div className="min-w-0 flex-1 space-y-6 p-4 md:p-6">{children}</div>
       </SidebarInset>
+      <SessionTimeout idleMs={SESSION_IDLE_MS} />
     </SidebarProvider>
   );
 }

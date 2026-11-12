@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { AuthField, authButton, authInput } from "./auth-field";
+import { PortalShellSkeleton } from "@/components/admin/page-skeletons";
 import { loginAction } from "@/server/actions/auth";
 
 export function LoginForm({
@@ -63,6 +64,11 @@ export function LoginForm({
       }}
       className="grid gap-4"
     >
+      {pending ? (
+        <div className="nib-overlay-in fixed inset-0 z-50 bg-background">
+          <PortalShellSkeleton />
+        </div>
+      ) : null}
       {notice ? (
         <p
           role="status"
@@ -145,7 +151,7 @@ export function LoginForm({
 
       {locked ? (
         <p role="alert" className="rounded-[6px] bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
-          Too many failed attempts. You can try again in{" "}
+          Too many failed attempts. Try again in{" "}
           <strong className="tabular-nums" aria-live="off">
             {remaining}
           </strong>{" "}

@@ -14,8 +14,12 @@ import { effectiveAssignmentPermissions } from "@/lib/rbac/permissions";
 import type { Assignment } from "@/lib/rbac/scope";
 
 export const SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1000; // hard cap per login
-export const SESSION_IDLE_MS = 30 * 60 * 1000; // sign out after inactivity
-const TOUCH_INTERVAL_MS = 60 * 1000;
+export const SESSION_IDLE_MS = 15 * 60 * 1000; // sign out after 15 minutes of inactivity
+/**
+ * lastUsedAt is written at most this often. Kept short so the idle limit is enforced within a few
+ * seconds of the real last activity (a longer interval would sign people out early by up to that much).
+ */
+const TOUCH_INTERVAL_MS = 15 * 1000;
 /** Newest sessions kept per user; signing in on a further device ends the oldest one. */
 export const MAX_ACTIVE_SESSIONS = 3;
 

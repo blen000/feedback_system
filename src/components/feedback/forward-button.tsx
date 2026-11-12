@@ -22,6 +22,8 @@ interface Person {
   email: string;
 }
 
+const NOTE_MAX = 500;
+
 /** Sends this feedback to a colleague with an optional note. The recipient gets it in "Forwarded to me". */
 export function ForwardButton({ feedbackId }: { feedbackId: string }) {
   const [open, setOpen] = useState(false);
@@ -39,6 +41,8 @@ function ForwardDialog({ feedbackId, onClose }: { feedbackId: string; onClose: (
   const { run, pending, error, fieldErrors } = useAction();
   const [people, setPeople] = useState<Person[] | null>(null);
   const [to, setTo] = useState("");
+  const [note, setNote] = useState("");
+  const noteTooLong = note.trim().length > NOTE_MAX;
 
   useEffect(() => {
     let alive = true;
@@ -64,9 +68,8 @@ function ForwardDialog({ feedbackId, onClose }: { feedbackId: string; onClose: (
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            const f = new FormData(e.currentTarget);
             run(
-              () => forwardFeedbackAction(feedbackId, { toUserId: to, note: f.get("note") || null }),
+              () => forwardFeedbackAction(feedbackId, { toUserId: to, note: note || null }),
               onClose,
             );
           }}
@@ -89,14 +92,26 @@ function ForwardDialog({ feedbackId, onClose }: { feedbackId: string; onClose: (
               ))}
             </NativeSelect>
           </Field>
-          <Field label="Note (optional)" htmlFor="note" errors={fieldErrors.note}>
+          <Field
+            label="Note (optional)"
+            htmlFor="note"
+            errors={noteTooLong ? ["Keep the note under 500 characters."] : fieldErrors.note}
+          >
             <Textarea
               id="note"
               name="note"
               rows={3}
-              maxLength={500}
+              // the limit is shown as a message (and enforced by the server); this only stops runaway pastes
+              maxLength={NOTE_MAX * 2}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
               placeholder="Why are you sending this?"
             />
+            <p
+              className={`text-right text-xs tabular-nums ${noteTooLong ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {note.trim().length} / {NOTE_MAX}
+            </p>
           </Field>
           <FormError message={Object.keys(fieldErrors).length ? null : error} />
           <DialogFooter>

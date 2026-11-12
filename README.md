@@ -14,7 +14,7 @@ cp .env.example .env        # set DATABASE_URL and AUTH_SECRET (>= 32 chars)
 npm install
 npm run db:deploy           # apply migrations (prisma migrate deploy)
 npm run db:seed             # permissions, roles, sample organization, demo users, sample survey + QR
-npm run dev
+npm run dev                 # http://localhost:4015 (port 3000 is often taken by other tools, e.g. Grafana)
 ```
 
 Generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
@@ -68,7 +68,7 @@ _location_; each location shows its currently ACTIVE questionnaire (branch/depar
 ## Security model
 
 - **Sessions:** opaque 256-bit token in an `httpOnly`, `SameSite=Strict` cookie (`__Host-` + `Secure` in production);
-  only an HMAC of the token is stored; 8 h hard limit, 30 min idle; at most 3 live sessions per user; revoked instantly on deactivation or password change.
+  only an HMAC of the token is stored; 8 h hard limit, 15 min idle (the admin portal warns 1 minute before and signs the user out automatically); at most 3 live sessions per user; revoked instantly on deactivation or password change.
 - **Email (SMTP):** with `SMTP_*` set, new users get an invitation link to choose their own password (nobody handles a password), and “Forgot password” emails a one-time link (60 min, single use, only a hash stored, identical answer whether or not the account exists, rate-limited, ends all sessions on success). Without SMTP the app falls back to administrator-set passwords. `SMTP_ALLOW_SELF_SIGNED=true` turns off certificate checking; use it only on a trusted network. Tests never send mail (in-memory capture driver).
 - **Login:** bcrypt, generic error messages, and a server-enforced lockout: 5 failed attempts per email address, then exactly 30 seconds during which no attempt is evaluated (the login page shows a countdown that survives a refresh); plus a per-source flood limit.
 - **Passwords:** at least 10 characters with upper and lower case, a number and a special character; common passwords are rejected. Administrator resets require re-entering your own password and are alerted.

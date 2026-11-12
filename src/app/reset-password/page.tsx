@@ -14,8 +14,11 @@ export default async function ResetPasswordPage({ searchParams }: PageProps<"/re
 
   if (!info.valid) {
     return (
-      <AuthShell title="Link expired" subtitle="This link is invalid, has already been used, or has expired.">
+      <AuthShell title="Link expired" subtitle="This link is invalid or has expired.">
         <div className="grid gap-4">
+          <p className="text-center text-sm text-muted-foreground">
+            Links work once. Request a new one if you still need to set your password.
+          </p>
           <Link
             href="/forgot-password"
             className="flex h-11 items-center justify-center rounded-[6px] bg-[color:var(--brand-gold)] text-[15px] font-semibold text-[#2a1706] hover:brightness-105"

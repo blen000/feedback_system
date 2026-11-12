@@ -13,7 +13,7 @@ export const SESSION_COOKIE = IS_PROD ? "__Host-bfs_session" : "bfs_session";
 
 /**
  * `persistent` means "Keep me signed in": the cookie survives closing the browser (up to the server-side
- * expiry). Otherwise it is a browser-session cookie. Server-side limits (8 h hard, 30 min idle) apply either way.
+ * expiry). Otherwise it is a browser-session cookie. Server-side limits (8 h hard, 15 min idle) apply either way.
  */
 export async function setSessionCookie(token: string, expiresAt: Date, persistent = false) {
   (await cookies()).set(SESSION_COOKIE, token, {

@@ -109,6 +109,16 @@ describe("session lifecycle", () => {
       data: { lastUsedAt: new Date(Date.now() - SESSION_IDLE_MS - 1000) },
     });
     expect(await authenticateToken(actor.token)).toBeNull();
+    expect(SESSION_IDLE_MS).toBe(15 * 60 * 1000);
+  });
+
+  it("stays valid just before the idle timeout, and activity restarts the 15 minutes", async () => {
+    const actor = await actorWith({ permissions: [] });
+    const almost = new Date(Date.now() - SESSION_IDLE_MS + 5000);
+    await prisma.session.update({ where: { id: actor.sessionId }, data: { lastUsedAt: almost } });
+    expect(await authenticateToken(actor.token)).not.toBeNull();
+    const session = await prisma.session.findUniqueOrThrow({ where: { id: actor.sessionId } });
+    expect(session.lastUsedAt.getTime()).toBeGreaterThan(Date.now() - 5000); // activity recorded
   });
 
   it("stops working immediately when the user is deactivated", async () => {

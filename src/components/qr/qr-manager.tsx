@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { SkeletonImage } from "@/components/ui/skeleton-image";
 import {
   Dialog,
   DialogContent,
@@ -101,8 +102,7 @@ export function QrManager({
                       onClick={() => setViewing(r)}
                       aria-label={`View QR code ${r.label}`}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={r.svg} alt="" width={56} height={56} className="rounded border bg-white" />
+                      <SkeletonImage src={r.svg} width={56} height={56} className="size-14 rounded border bg-white" />
                     </button>
                   </TableCell>
                   <TableCell>
@@ -179,11 +179,10 @@ function ViewDialog({ row, onClose }: { row: QrRow; onClose: () => void }) {
             {row.location.parent ? ` · ${row.location.parent}` : ""}
           </DialogDescription>
         </DialogHeader>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <SkeletonImage
           src={row.svg}
           alt={`QR code for ${row.label}`}
-          className="mx-auto w-64 max-w-full rounded border bg-white"
+          className="mx-auto block aspect-square w-64 max-w-full rounded border bg-white"
         />
         <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2">
           <code className="min-w-0 flex-1 break-all text-xs">{row.url}</code>

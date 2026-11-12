@@ -50,6 +50,22 @@ export async function logoutAction(): Promise<void> {
   redirect("/login");
 }
 
+/**
+ * Keep-alive from the inactivity timer: the user is interacting with the page (typing a long form,
+ * reading) without causing requests. Authenticating the token records the activity on the session.
+ * Returns false when the session is already gone (expired, revoked, deactivated).
+ */
+export async function sessionHeartbeatAction(): Promise<boolean> {
+  return (await getAuthContext()) !== null;
+}
+
+/** Inactivity limit reached in the browser: end the session server-side and show why on the login page. */
+export async function idleLogoutAction(): Promise<void> {
+  await logout(await readSessionToken(), await requestMeta());
+  await clearSessionCookie();
+  redirect("/login?timeout=1");
+}
+
 export async function changePasswordAction(
   _prev: ActionResult | undefined,
   formData: FormData,

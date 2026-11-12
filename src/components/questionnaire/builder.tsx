@@ -170,13 +170,18 @@ export function QuestionnaireBuilder({
           {perms.publish || perms.update || perms.delete ? (
             <div className="flex flex-wrap gap-2">
               {status === "DRAFT" && perms.publish ? (
-                <Button
-                  disabled={dirty || life.pending}
-                  onClick={() => life.run(() => publishAction(initial.id))}
-                  title={dirty ? "Save your changes first" : undefined}
-                >
-                  {life.pending ? "Publishing…" : "Publish"}
-                </Button>
+                <span className="flex items-center gap-2">
+                  {/* a disabled button gets no hover tooltip, so the reason is written out */}
+                  {dirty ? (
+                    <span className="text-sm text-amber-700 dark:text-amber-400">Save your changes first</span>
+                  ) : null}
+                  <Button
+                    disabled={dirty || life.pending}
+                    onClick={() => life.run(() => publishAction(initial.id))}
+                  >
+                    {life.pending ? "Publishing…" : "Publish"}
+                  </Button>
+                </span>
               ) : null}
               {(status === "PUBLISHED" || status === "PAUSED") && perms.publish ? (
                 <ConfirmButton

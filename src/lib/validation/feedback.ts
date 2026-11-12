@@ -47,5 +47,10 @@ export function parseFilters(raw: Record<string, string | string[] | undefined>)
     if (one.success) valid[k] = v;
   }
   const retry = feedbackFilterSchema.safeParse(valid);
-  return retry.success ? retry.data : feedbackFilterSchema.parse({});
+  if (retry.success) return retry.data;
+  // individually valid but contradictory (end date before start date): ignore just the date range
+  delete valid.from;
+  delete valid.to;
+  const withoutDates = feedbackFilterSchema.safeParse(valid);
+  return withoutDates.success ? withoutDates.data : feedbackFilterSchema.parse({});
 }

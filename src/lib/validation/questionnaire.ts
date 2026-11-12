@@ -24,7 +24,12 @@ const localized = (max: number) =>
 
 const configSchema = z
   .object({
-    scale: z.number().int().min(3).max(10).optional(),
+    scale: z
+      .number()
+      .int("Use a whole number of stars.")
+      .min(3, "Use between 3 and 10 stars.")
+      .max(10, "Use between 3 and 10 stars.")
+      .optional(),
     min: z.number().finite().optional(),
     max: z.number().finite().optional(),
     integer: z.boolean().optional(),
